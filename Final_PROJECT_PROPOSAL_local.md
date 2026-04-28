@@ -1,16 +1,24 @@
 # Project Proposal: CityLiving Sim
 
 ## One-Line Description
-A city-portable neighborhood life simulator that lets users experience what living in any neighborhood would actually be like over 12 months — using real civic open data, a PyTorch crime prediction model, and AI-generated narratives. Launching with Chicago (20+ years of data, 77 community areas), architected to scale to any US city with a Socrata open data portal — and globally to any municipality publishing open civic data.
+A neighborhood life simulator that puts you *inside* a year of living somewhere — using real civic open data, a grounded conversational agent, and a spatially-present UI — so you can ask "what is my commute actually like?" and get an answer drawn from 20 years of real data, not a score. Launching with Chicago (77 community areas), architected to scale to any city with open civic data.
 
 ## The Problem
 Every platform that helps you choose a neighborhood — Zillow, Niche, Trulia, NeighborhoodScout — gives you a snapshot: a score, a grade, a static number. But choosing where to live isn't about a number. It's about what your daily life will feel like: how crowded your train is at 8am, whether the city fixes the pothole on your street, whether crime on your block is getting better or worse as the months go by.
 
 No tool simulates lived experience. You get a letter grade and figure it out yourself.
 
-This problem is universal. Someone moving to Austin, NYC, or London faces the exact same information gap — and increasingly, the data to solve it is publicly available. Over 200 US cities publish civic data through Socrata portals, and open data initiatives are expanding globally.
+The gap isn't data — Chicago alone has 20+ years of crime records, transit ridership, 311 service requests, and housing data, all publicly available. The gap is that no product translates that data into the felt texture of a year in a neighborhood. That's what this builds.
 
-I want to build the platform that lets you experience a year in a neighborhood before you sign a lease — starting with Chicago, designed to work anywhere.
+## The Vision: Simulation, Not Scoring
+
+The product is best understood by contrast with what it is not.
+
+**What existing tools do:** Score a neighborhood against your profile. Hyde Park gets a B+ for transit, a C for safety. You see a number and figure out what it means.
+
+**What CityLiving Sim does:** Place you inside a neighborhood, in a specific month, and let you ask questions from that position. "What is my morning commute like?" returns a grounded, first-person answer drawn from actual CTA ridership data for that route in that month — not a transit score. "What happens if I need to report something broken on my block?" returns the actual 311 response time distribution for that neighborhood in that season. "Is November safe here?" returns the crime pattern for that specific area and time, narrated in plain language.
+
+The mental model is closer to Google Street View than to Zillow: you are spatially located inside the neighborhood, not evaluating it from outside. The difference in feel is the entire product.
 
 ## Target User
 - **Primary:** Anyone considering a move — within a city, to a new city, or across borders. This includes renters whose lease is up, first-time homebuyers, job-switchers re-optimizing commute, and relocating professionals. In Chicago alone, ~100K households move annually.
@@ -18,22 +26,31 @@ I want to build the platform that lets you experience a year in a neighborhood b
 - **Tertiary:** Urban planners, city council staff, journalists, and researchers studying neighborhood equity and city service disparities. The same data pipeline that powers a personal simulation also powers civic analysis: "Which neighborhoods have the worst 311 response times?" is one query away.
 - **Future:** As the platform expands to more cities, the total addressable audience scales with every city onboarded — there are 50M+ annual moves in the US alone.
 
-Chicago is the launch city because I have 20+ years of rich civic data and a built-in test audience (UChicago). But the platform is city-agnostic by design.
+Chicago is the launch city because it has 20+ years of rich civic data and a built-in test audience (UChicago). But the platform is city-agnostic by design.
 
-## Core Features (v1 — Chicago Launch)
+## Core Features
 
-1. **User profile creation** — Set your budget, workplace location, commute preferences, and what matters most to you (safety, transit, affordability, city services). Saved via Clerk auth.
-2. **12-month neighborhood simulation** — Pick a neighborhood and get a month-by-month simulation of your year: crime incidents near your address, transit commute patterns, 311 service response times, and seasonal trends. Each month is a data-grounded narrative, not a guess.
-3. **AI-generated narratives + ASCII month cards** — An AI narrative agent transforms structured simulation data into readable month-by-month stories that cite specific numbers ("Month 4: A 311 pothole report on your street took 18 days to resolve. The city average is 5.2 days"). Each month also renders an auto-generated ASCII scene card driven by the same structured data — a visual companion to the text, not decoration.
-4. **Simulation comparison** — Run simulations for 2-3 neighborhoods side by side. See which one fits your priorities across the full year, not just today's snapshot.
-5. **Interactive map** — City map color-coded by personalized fit (based on your profile weights). Click any neighborhood to launch a simulation.
+1. **Conversational simulation engine** — The primary product surface. After selecting a neighborhood and setting a persona (budget, workplace, commute priority), the user enters a conversational interface grounded in real civic data. They can ask anything about living there: commute patterns, seasonal crime trends, how fast the city responds to service requests, what a typical Tuesday feels like. Every answer is assembled from real queried data, not generated from model weights. The agent narrates the data — it does not invent it.
+
+2. **Spatially-present UI** — The simulation environment communicates location, season, and time of day through a stylized illustrated street scene (CSS/SVG) that changes as the user moves through months. The user is not looking at a dashboard about Hyde Park — they are standing in Hyde Park in October. The scene changes with the month: winter empties the streets, summer fills them, midterms week crowds the bus stop. This spatial grounding is what makes the conversational layer feel like simulation rather than search.
+
+3. **Month-by-month temporal progression** — The user moves through a year one month at a time, with the conversational context accumulating. Questions asked in October carry forward — if the user asked about crime in October, the November response can reference how it changed. By December the conversation reads like a journal of a year, not a Q&A session.
+
+4. **User persona** — Budget, workplace location, commute preference, and priority weights (safety, transit, affordability, city services) are set at onboarding and carried through every response. The agent answers questions from the perspective of that specific person — "your commute," "your block," "your budget" — not generically.
+
+5. **Neighborhood comparison** — Run the same conversational simulation for two neighborhoods. The comparison is not a side-by-side score table — it is the lived difference: "In Hyde Park, you asked about crime in November and learned X. In Logan Square, the same month looks like Y."
+
+6. **Year summary** — After completing a simulation, a retrospective written in past tense: what worked, what was mixed, one thing to know. No overall score. Specific numbers from the actual simulation, not aggregated ratings.
+
+7. **Interactive neighborhood map** — Entry point for exploration. Chicago's 77 community areas, with contextual descriptors. Click a neighborhood to enter its simulation. No fit scores on the map — descriptors only ("Campus · Quiet · Lakefront").
 
 ## Tech Stack
-- **Frontend:** Next.js (App Router) — SSR for fast initial load, client-side interactivity for simulation timeline
+- **Frontend:** Next.js (App Router) — SSR for fast initial load, client-side interactivity for simulation environment
 - **Styling:** Tailwind CSS + shadcn/ui — clean, accessible components
-- **Database:** Supabase (Postgres) — stores time-series civic data, user profiles, simulation results, model predictions. Multi-city schema: all tables are partitioned by `city_id`, so adding a new city means inserting rows, not changing the schema.
-- **Auth:** Clerk — user accounts, saved simulations, comparison history
-- **City Configuration Layer:** Each city is defined by a JSON config file that maps generic data categories (crime, transit, 311, housing, neighborhoods) to that city's specific Socrata API endpoints, column names, and geographic boundary files. Adding a new city = writing one config file + ingesting data. No code changes required.
+- **Simulation UI:** CSS/SVG illustrated street scenes, season- and time-aware, rendered deterministically from structured data. No image API dependency for the core visual layer — scenes are programmatic, not generated.
+- **Database:** Supabase (Postgres) — stores time-series civic data, user profiles, simulation sessions, conversation history, model predictions. Multi-city schema: all tables partitioned by `city_id`.
+- **Auth:** Clerk — user accounts, saved simulations, conversation history
+- **City Configuration Layer:** Each city defined by a JSON config mapping generic data categories (crime, transit, 311, housing, neighborhoods) to that city's specific Socrata API endpoints, column names, and geographic boundary files. Adding a new city = writing one config file + ingesting data. No code changes required.
 - **APIs (Chicago launch):** Socrata Open Data API (free, all endpoints verified accessible):
   - Crimes: `https://data.cityofchicago.org/resource/ijzp-q8t2.json`
   - Affordable Housing: `https://data.cityofchicago.org/resource/s6ha-ppgi.json`
@@ -41,122 +58,119 @@ Chicago is the launch city because I have 20+ years of rich civic data and a bui
   - CTA Bus Ridership: `https://data.cityofchicago.org/resource/t2rn-p8d7.json`
   - 311 Service Requests: `https://data.cityofchicago.org/resource/v6vf-nfxy.json`
   - Community Boundaries: `https://data.cityofchicago.org/resource/igwz-8jzy.json`
-- **Socrata Portability:** 200+ US cities use Socrata (NYC, LA, SF, Seattle, Austin, etc.). The platform's data ingestion pipeline speaks SoQL (Socrata Query Language) natively — onboarding a new Socrata city is a config change, not a code change. For non-Socrata cities (international), a pluggable adapter interface allows custom data connectors.
-- **AI/Narrative:** LLM-powered narrative agent that converts structured simulation data into readable monthly stories. Grounded in retrieved data — the agent explains numbers, it doesn't invent them. City-aware prompt templates adapt tone and context per locale.
-- **Visual layer (v1: ASCII scene cards):** Each month card renders an auto-generated ASCII scene alongside the narrative — small fixed-template scenes (bus stop, train platform, snowy street) with data-driven badges (crowding meter, crime count glyph, 311 backlog bar). Deterministic, no API cost, renders in any browser. Uses the same structured data the narrative cites, so visuals stay in sync with the story. Programmatic SVG and AI-generated per-month images are stretch, not v1.
-- **ML Inference:** FastAPI on Render (free tier) — serves a PyTorch crime trend model (temporal convolutional network trained on 7M+ crime records for Chicago). Model architecture is city-agnostic — retrain on any city's historical crime data to produce city-specific predictions.
+- **Conversational Agent:** LLM with structured tool use — the agent receives a question, routes it to the appropriate Supabase query (crime, transit, 311, or housing), receives structured results, and narrates them in first-person present tense. The agent cannot answer a civic question without first querying real data. This is the core hallucination guardrail.
+- **ML Inference (stretch):** FastAPI on Render — serves a PyTorch crime trend model (temporal convolutional network trained on 7M+ Chicago crime records) for forward-looking months. City-agnostic architecture.
 - **Deployment:** Vercel (frontend) + Render (ML endpoint)
 - **MCP Servers:** Supabase MCP for database management during development
 
 ## How the Simulation Engine Works
 
-The simulation is not an LLM generating fiction. It is a structured data pipeline:
+The simulation is a grounded conversational agent, not a pre-rendered narrative pipeline.
 
 ```
-User Profile (budget, workplace, priorities)
+User Persona (budget, workplace, priorities)
         +
-Selected Neighborhood
+Selected Neighborhood + Month
         │
         ▼
-┌─────────────────────────────────┐
-│  Simulation Engine (server)     │
-│                                 │
-│  For each of 12 months:        │
-│  1. Query crime_monthly table   │
-│     → actual crime counts by    │
-│       type for that area/month  │
-│  2. Query transit_metrics       │
-│     → ridership, peak crowding  │
-│  3. Query service_requests      │
-│     → 311 response times,       │
-│       complaint types           │
-│  4. Query housing_units         │
-│     → affordable inventory      │
-│  5. (Stretch) For forward       │
-│     months: call PyTorch        │
-│     endpoint → predicted trend  │
-│  6. Apply user's priority       │
-│     weights to compute          │
-│     monthly experience score    │
-│  7. Send structured data to     │
-│     narrative agent → readable  │
-│     monthly story               │
-└─────────────────────────────────┘
+┌──────────────────────────────────────────┐
+│  Conversational Agent (server)           │
+│                                          │
+│  User asks: "What is my commute like?"  │
+│                                          │
+│  Agent:                                  │
+│  1. Identifies question category         │
+│     → transit                            │
+│  2. Queries transit_metrics table        │
+│     → ridership, frequency, peak times   │
+│     for this neighborhood × this month   │
+│  3. Applies persona context              │
+│     → workplace location, budget,        │
+│        commute priority weight           │
+│  4. Assembles structured data context    │
+│  5. Narrates in first-person present     │
+│     tense, citing specific numbers       │
+│     ("You wait 6–8 minutes at peak...")  │
+│  6. Stores Q&A in session history        │
+│     → future answers can reference       │
+│        what was asked before             │
+└──────────────────────────────────────────┘
         │
         ▼
-12-month simulation with:
-  - Monthly narrative (AI-generated from real data)
-  - Monthly ASCII scene card (data-bound visual)
-  - Monthly experience scores
-  - Year-end summary + recommendation
-  - Comparison-ready structured output
+Conversational simulation with:
+  - Every answer grounded in queried data
+  - Persona-aware narration throughout
+  - Session memory across months
+  - Scene environment updating with month
+  - Year summary generated from session
 ```
 
-Key design decisions:
-- **Agents don't generate facts** — they receive structured data (numbers, rankings) and produce natural-language explanations citing those numbers. This minimizes hallucination.
-- **Historical months use actual data** — no modeling needed for months that already happened.
-- **Forward-looking months are stretch (Week 7-8)** — when shipped, they use PyTorch predictions clearly labeled with confidence intervals. v1-v2 cover historical months only.
-- **Simulations are deterministic for the same inputs** — reproducible, auditable.
+**Key design decisions:**
+
+- **The agent queries before it answers** — no civic question is answered from model weights alone. The query result is assembled into the prompt context before narration begins. This is non-negotiable: it is what separates this from a chatbot that happens to talk about neighborhoods.
+- **Tool use is the grounding mechanism** — the agent has discrete tools (query_crime, query_transit, query_311, query_housing) that must be called and return results before a response is generated. Failed or empty queries surface explicitly ("I don't have 311 data for this neighborhood in this month") rather than silently hallucinating.
+- **Session history accumulates** — the conversation isn't stateless. October's Q&A is available context in November. This is what makes it feel like a year rather than a series of disconnected lookups.
+- **Simulations are reproducible** — the same persona + neighborhood + month + question produces the same underlying data, even if the narration varies slightly.
+
+## The UI Experience
+
+The simulation environment has three layers working simultaneously:
+
+**Layer 1 — Spatial scene (background):** A stylized illustrated street in Hyde Park. Time of day and season are visible. In October it's a warm morning, bus stop visible, moderate foot traffic. In December it's quieter, colder light. The scene is not photorealistic — it is evocative enough to communicate "I am somewhere" rather than "I am looking at a dashboard."
+
+**Layer 2 — Conversational interface (foreground):** A chat-style input at the bottom of the scene. Suggested questions are surfaced based on the current month and persona ("What is my commute like this month?" / "Did anything happen on my block?" / "How is the city responding to requests here?"). The user can also ask anything freeform. Responses appear in the scene's context — not in a separate panel, but as part of the environment.
+
+**Layer 3 — Month timeline (navigation):** A minimal month strip at the top. The user advances months deliberately — each month is a distinct "chapter" of the year. Advancing to a new month updates the scene and resets suggested questions, but preserves conversation history.
+
+The overall feel: you are standing in a neighborhood, asking questions about your life there, and the answers are drawn from what actually happened.
+
+## Biggest Risks
+
+**1. Grounded conversational Q&A (primary risk — new)**
+The hardest engineering problem in this project is not narrative quality — it is query routing and hallucination prevention in the conversational agent. The agent must correctly identify what kind of question is being asked, call the right tool, handle empty or sparse data gracefully, and never narrate facts it did not retrieve. This is where the vision lives or dies. Mitigation: implement tool-use with strict schema validation; empty query results surface as explicit uncertainty ("311 data for this block in this month is sparse — here's what the neighborhood average looks like"); build a test suite of question types with expected query patterns before building the UI on top.
+
+**2. Demo failure modes (new)**
+A live conversational agent querying real data can fail in a demo in ways a static UI never can: latency spikes, unexpected empty results, the agent going off-script. Mitigation: maintain a curated "demo mode" — a fixed set of 8-10 questions with pre-validated, pre-cached answers for Hyde Park × October–December, guaranteed to work end-to-end. The demo runs on this path. The live query path is exercised in development but the demo does not depend on it.
+
+**3. Scene visual quality**
+The illustrated street scene needs to communicate spatial presence without requiring an image generation API or significant design resources. If the scene feels like a placeholder, the whole "you are standing there" framing collapses. Mitigation: commit early to the CSS/SVG programmatic approach and prototype the scene before building the conversational layer on top of it. If the scene doesn't work at week 5, adjust the framing — but don't leave this as the last thing built.
+
+**4. PyTorch model accuracy (stretch)**
+If the crime prediction model doesn't beat a naive baseline, forward-looking months lose credibility. Mitigation: benchmark against baseline early. If the model underperforms, fall back to statistical trend extrapolation — the simulation still works for historical months.
+
+**5. Data heterogeneity across cities (scaling)**
+Not every city publishes the same data categories. Mitigation: the city config layer defines which tools are available per city — simulations gracefully degrade (a city without transit data skips transit questions instead of failing).
 
 ## Stretch Goals
-- **Forward-looking predictions (Week 7-8):** The final months of each simulation use a PyTorch temporal model trained on historical crime data to predict where the neighborhood is heading. Predictions include confidence scores and which crime types are driving the trend. Moved out of v1 to keep the Week 5-6 critical path narrow; the model architecture and training data are still part of the project plan.
-- **Neighborhood health dashboard:** For existing residents, track your current neighborhood's trajectory over time. Get notified when trends shift significantly (crime spike, transit service change, 311 response degradation). Separate product surface from the simulation; not needed to demo the core idea.
-- **Programmatic SVG visuals:** Sparklines and icon rows sized by ridership, layered on top of the v1 ASCII cards.
-- **AI-generated per-month images:** One small image per month via image API. Highest visual impact but adds cost, latency, and a new failure mode.
-- **Recommendation agent:** AI agent that takes your profile and suggests which neighborhoods to simulate first, with reasoning
-- **Seasonal deep dive:** Click any month to see detailed breakdown (crime by type, transit by hour, 311 by category)
-- **Historical playback:** "What would living here have been like in 2015?" — run the simulation on historical data
-- **Shareable simulations:** Generate a link to share your simulation results with friends
-- **Regime change alerts:** Email notification when a saved neighborhood's trajectory changes significantly
-- **Cross-city comparison:** "Compare Lincoln Park (Chicago) vs. Williamsburg (NYC)" — same simulation framework, different data sources
-- **Civic equity dashboard:** Aggregate view for journalists/planners — surface systemic disparities (e.g., "South Side 311 response times are 3.2x slower than North Side") across any onboarded city
+- **Forward-looking months:** PyTorch temporal model predicts crime trend for months beyond available data. Predictions labeled with confidence intervals and surfaced in the conversational context ("Based on the past 3 years, November tends to see a 15% uptick in property crime in this area").
+- **AI-generated scene images:** Replace CSS/SVG scenes with AI-generated per-month images. Higher visual impact, adds cost and latency.
+- **Shareable simulations:** Generate a link to share your simulation session with someone else.
+- **Historical playback:** "What would living here have been like in 2015?" — run the simulation on a different historical window.
+- **Regime change alerts:** Notification when a saved neighborhood's data trajectory changes significantly.
+- **Cross-city comparison:** Same simulation framework, different data sources — "Compare Lincoln Park (Chicago) vs. Williamsburg (NYC)."
+- **Civic equity dashboard:** Aggregate view for journalists/planners — surface systemic disparities across any onboarded city.
+- **Recommendation agent:** Takes your profile and suggests which neighborhoods to simulate first, with reasoning.
 
 ## Scaling Roadmap
 
 ### Phase 1: Chicago (Final Project — Now)
-Full platform with 20+ years of data across 77 community areas. Prove the simulation concept, ML pipeline, and narrative engine work end-to-end.
+Full platform with 20+ years of data across 77 community areas. Prove the conversational simulation, grounded tool-use pipeline, and spatial UI work end-to-end.
 
 ### Phase 2: US Expansion (Post-Launch)
 Onboard 5-10 major US Socrata cities (NYC, LA, SF, Seattle, Austin). Each city requires:
 - One city config JSON (API endpoints, column mappings, geographic boundaries)
 - Data ingestion run (automated pipeline pulls historical data into Supabase)
 - ML model retraining on that city's crime data (same architecture, new weights)
-- No frontend or simulation engine changes
-
-**Why this is feasible:** All target cities already publish crime, 311, transit, and housing data through Socrata with similar schemas. The heavy engineering is done once in Phase 1.
+- No frontend, agent, or simulation engine changes
 
 ### Phase 3: Global Expansion (Future)
-International cities with open data portals (London, Toronto, Sydney, Berlin) publish similar civic datasets through non-Socrata platforms. The pluggable adapter interface built in Phase 2 handles this — each new data platform gets one adapter, then any city on that platform can be onboarded via config.
+International cities through non-Socrata platforms. The pluggable adapter interface handles this — one adapter per data platform, then any city on that platform is a config change.
 
-**Scale potential:** 200+ US cities on Socrata alone. The Open Data Index tracks 2,600+ government open data portals worldwide. Every portal that publishes crime, transit, and service request data is a potential city on the platform.
+## Version Arc
 
-## Biggest Risk
-**Narrative quality.** The AI-generated monthly narratives could feel robotic or repetitive across 12 months x 77 neighborhoods. Mitigation: use structured templates with intentional variation, inject specific data points into every sentence, and supplement with LLM for natural phrasing. I will prototype one full 12-month narrative by hand before building the engine — if the manual version isn't compelling, adjust the concept before investing in infrastructure.
+The build sequence is disciplined: the data pipeline and grounding infrastructure must exist before the conversational layer is built on top of it. The spatial UI can be prototyped in parallel but should not be mistaken for the product — the product is the grounded agent.
 
-**Secondary risk:** PyTorch model accuracy. If the crime prediction model doesn't beat a naive baseline (last year's trend continues), the forward-looking months lose credibility. Mitigation: benchmark against the baseline early (Week 6). If the model underperforms, fall back to statistical trend extrapolation — the simulation still works, just without the ML narrative.
-
-**Scaling risk:** Data heterogeneity across cities. Not every city publishes the same data categories, and column names/formats vary. Mitigation: the city config layer defines which data categories are available per city — simulations gracefully degrade (e.g., a city without transit data skips transit narratives instead of failing). The core simulation works with any subset of the four data categories (crime, transit, 311, housing).
-
-**Simulation integration risk.** The full data → query → narrative agent → ASCII card → render pipeline has not been built end-to-end yet. Most blockers in this kind of project show up at the integration seams, not inside any single component. Mitigation: ship the Vertical Slice MVP (below) before broad data ingestion begins. Per TA feedback, approach from both sides — engine and data layer — concurrently, so blockers surface in Week 4-5 rather than Week 7.
-
-## v1 Goal (Week 6)
-
-Per the class rubric ("start small with an end-to-end v1 and continue layering features each week") and per TA feedback ("lightweight, well-defined, narrow-scoped — maybe just riding the bus in Hyde Park"), v1 ships the **thinnest possible end-to-end thread** through the entire pipeline.
-
-- **Scope:** Hyde Park × CTA bus ridership only × October 2024 × one persona (UChicago student commuter). One neighborhood, one dataset, one month.
-- **End-to-end deliverable:** A single web page that, on button click, renders one **month card** containing:
-  1. A structured data block (October 2024 ridership for Hyde Park bus routes, peak crowding hour, week-over-week delta)
-  2. An AI-generated narrative paragraph that cites those numbers
-  3. An ASCII scene card (stylized bus stop + crowding meter glyph) driven by the same structured data
-- **Required infrastructure (only what v1 needs):** Next.js app + Supabase (one ingested table for Oct 2024 CTA bus + Hyde Park route filter) + LLM API call for narrative + ASCII card generator + Vercel deploy.
-- **Explicitly NOT in v1:** Clerk auth, user profiles, neighborhood browser, interactive map, historical charts, comparison view, multiple months, multiple neighborhoods, multiple data categories, PyTorch model. All of these layer on in v2-v4.
-- **Why this slice:** Bus ridership is the simplest dataset (no geocoding), Hyde Park is the launch neighborhood (data sanity-check is trivial), one month sidesteps time-series complexity. If any of the four pipeline hand-offs (data → query → narrative agent → ASCII render) breaks at narrow scope, it would have broken at full scope too — better to find out in Week 6 than Week 9.
-
-## Version Arc (v1 → v4)
-
-The class arc runs v1 (Week 6) → v4 (Week 9 project fair). Each version layers features onto the v1 thread without rewriting it.
-
-- **v1 (Week 6) — End-to-end thread.** Hyde Park × CTA bus × October 2024. One rendered month card. Pipeline proven.
-- **v2 (Week 7) — Temporal expansion.** Same neighborhood, full 12 months. Add 311 service requests and crime as additional data categories. Three month cards stitched into a year view.
-- **v3 (Week 8) — Spatial expansion + users.** Expand to ~5 neighborhoods. Add Clerk auth, user profile (budget/workplace/priorities), and side-by-side comparison of two neighborhoods. Interactive map for navigation.
-- **v4 (Week 9 — project fair) — Full Chicago + polish.** All 77 community areas. Polished demo flow. Stretch: PyTorch forward-looking predictions for the final months of each simulation if the model beats the naive baseline.
+- **v1 — Pipeline proof:** Hyde Park × CTA bus × one month. One grounded Q&A exchange: user asks "what is my commute like?", agent queries real data, returns narrated answer. The scene is minimal (even a placeholder). The goal is proving the query → context assembly → narration chain works end-to-end with real data.
+- **v2 — Temporal depth:** Full 12 months, all four data categories (crime, transit, 311, housing). Multiple question types working. Session history accumulating across months. Scene updating by season.
+- **v3 — Spatial + multi-neighborhood:** Illustrated scene at full fidelity. 5 neighborhoods. Neighborhood comparison. Clerk auth, saved sessions.
+- **v4 (project fair) — Full Chicago + polish:** All 77 community areas. Polished demo flow with curated demo mode. Stretch: PyTorch forward-looking months if model beats baseline.
