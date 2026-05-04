@@ -40,3 +40,12 @@ button {
   font: inherit;
 }
 
+@keyframes cloudDrift {
+  0%, 100% { transform: translateX(0); }
+  50%       { transform: translateX(8px); }
+}
+
+.sky-cloud {
+  animation: cloudDrift 60s ease-in-out infinite;
+}
+

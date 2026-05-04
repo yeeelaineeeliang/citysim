@@ -8,7 +8,8 @@
     "start": "next start",
     "typecheck": "tsc --noEmit",
     "ingest:v1": "tsx scripts/ingest_v1.ts",
-    "verify:v1": "tsx scripts/verify_v1.ts"
+    "verify:v1": "tsx scripts/verify_v1.ts",
+    "preprocess": "tsx scripts/preprocess_local_data.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.91.1",

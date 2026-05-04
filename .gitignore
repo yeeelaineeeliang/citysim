@@ -13,3 +13,4 @@ dist
 .vercel
 *.log
 tsconfig.tsbuildinfo
+/CityData
