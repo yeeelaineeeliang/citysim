@@ -6,6 +6,7 @@ interface SkyboxProps {
   crimeSignal: 2 | 0 | -2 | null;
   serviceSignal: 1 | -1 | null;
   transitSignal: 1 | 0 | -1;
+  fullBleed?: boolean;
 }
 
 const GRADIENTS: Record<Mood, string> = {
@@ -224,7 +225,7 @@ function SkyElements({ mood }: { mood: Mood }) {
   );
 }
 
-export function Skybox({ month, crimeSignal, serviceSignal, transitSignal }: SkyboxProps) {
+export function Skybox({ month, crimeSignal, serviceSignal, transitSignal, fullBleed = false }: SkyboxProps) {
   const mood = computeMood(crimeSignal, serviceSignal, transitSignal);
   const season = getSeason(month);
 
@@ -233,9 +234,9 @@ export function Skybox({ month, crimeSignal, serviceSignal, transitSignal }: Sky
       style={{
         position: "relative",
         width: "100%",
-        height: 140,
+        height: fullBleed ? "100%" : 140,
         background: GRADIENTS[mood],
-        borderRadius: "16px 16px 0 0",
+        borderRadius: fullBleed ? 0 : "16px 16px 0 0",
         overflow: "hidden",
       }}
     >

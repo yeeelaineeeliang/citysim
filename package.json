@@ -9,10 +9,12 @@
     "typecheck": "tsc --noEmit",
     "ingest:v1": "tsx scripts/ingest_v1.ts",
     "verify:v1": "tsx scripts/verify_v1.ts",
-    "preprocess": "tsx scripts/preprocess_local_data.ts"
+    "preprocess": "tsx scripts/preprocess_local_data.ts",
+    "cache:street-view": "tsx scripts/cache_street_view.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.91.1",
+    "@clerk/nextjs": "^7.3.1",
     "@supabase/supabase-js": "^2.104.1",
     "dotenv": "^17.4.2",
     "groq-sdk": "^1.1.2",
