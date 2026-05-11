@@ -6,6 +6,7 @@
     "dev": "next dev --webpack",
     "build": "next build --webpack",
     "start": "next start",
+    "test": "node --import tsx --test lib/**/*.test.ts",
     "typecheck": "tsc --noEmit",
     "ingest:v1": "tsx scripts/ingest_v1.ts",
     "verify:v1": "tsx scripts/verify_v1.ts",

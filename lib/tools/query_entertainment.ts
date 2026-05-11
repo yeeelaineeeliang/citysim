@@ -48,21 +48,39 @@ async function fromSupabase(neighborhood: string, month?: number): Promise<Enter
 
   const { data } = await supabase
     .from('entertainment_metrics')
-    .select('restaurants, bars, parks, farmers_markets')
+    .select('restaurants, bars, parks, libraries, farmers_markets')
     .eq('community_area_id', ca.id)
     .eq('year', 2024)
     .single()
 
   if (!data) return null
 
-  const parks = Array.isArray(data.parks)
-    ? (data.parks as unknown[]).filter((p) => typeof p === 'string') as string[]
-    : []
+  // Parks and libraries are stored as [{name: "..."}, ...] objects from ETL seeding.
+  // We support both plain strings (legacy) and {name} objects.
+  function extractNames(raw: unknown): string[] {
+    if (!Array.isArray(raw)) return []
+    return raw.flatMap((item) => {
+      if (typeof item === 'string') return [item]
+      if (item && typeof item === 'object' && 'name' in (item as Record<string, unknown>)) {
+        const n = (item as Record<string, unknown>).name
+        return typeof n === 'string' && n ? [n] : []
+      }
+      return []
+    })
+  }
+
+  const parks     = extractNames(data.parks)
+  const libraries = extractNames(data.libraries)
+  // Merge libraries into parks list so the agent can mention both green space and civic amenities
+  const parksPlusLibraries = [
+    ...parks,
+    ...libraries.map((l) => `${l} (library)`),
+  ]
 
   return {
     restaurants: (data.restaurants as number) ?? 0,
     bars: (data.bars as number) ?? 0,
-    parks,
+    parks: parksPlusLibraries,
     farmers_markets: isFarmersMarketActive(Boolean(data.farmers_markets), month),
   }
 }

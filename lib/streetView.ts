@@ -1,5 +1,5 @@
 import { createSupabaseAdminClient, hasSupabaseCredentials } from "@/lib/supabase";
-import { getCommunityAreaCentroidBySlug, getCommunityAreaCentroids } from "@/lib/communityAreaCentroids";
+import { getCoordinateBySlug, getAllCoordinates } from "@/lib/neighborhoodCoordinates";
 
 const CITY_SLUG = "chicago";
 const STREET_VIEW_SIZE = "1280x720";
@@ -83,14 +83,15 @@ export async function getStreetViewImageForCommunityArea(slug = "hyde-park"): Pr
       .maybeSingle<StreetViewCacheRow>();
 
     if (cached?.image_url) {
-      const latitude = area.centroid_lat ?? getCommunityAreaCentroidBySlug(slug)?.latitude ?? 0;
-      const longitude = area.centroid_lng ?? getCommunityAreaCentroidBySlug(slug)?.longitude ?? 0;
+      const coord = getCoordinateBySlug(slug);
+      const latitude = area.centroid_lat ?? coord?.lat ?? 0;
+      const longitude = area.centroid_lng ?? coord?.lng ?? 0;
       return { imageUrl: cached.image_url, latitude, longitude, source: "cache" };
     }
 
-    const localCentroid = getCommunityAreaCentroidBySlug(slug);
-    const latitude = hasCoordinate(area) ? Number(area.centroid_lat) : localCentroid?.latitude;
-    const longitude = hasCoordinate(area) ? Number(area.centroid_lng) : localCentroid?.longitude;
+    const coord = getCoordinateBySlug(slug);
+    const latitude = hasCoordinate(area) ? Number(area.centroid_lat) : coord?.lat;
+    const longitude = hasCoordinate(area) ? Number(area.centroid_lng) : coord?.lng;
     if (
       typeof latitude !== "number" ||
       typeof longitude !== "number" ||
@@ -153,7 +154,7 @@ export async function cacheStreetViewImagesForAllCommunityAreas() {
 
   if (areasError) throw new Error(`Failed to query community areas: ${areasError.message}`);
 
-  const localCentroids = getCommunityAreaCentroids();
+  const allCoords = getAllCoordinates();
   const areasByNumber = new Map((areas ?? []).map((area) => [area.community_area_number, area]));
 
   const { data: existingRows, error: existingError } = await supabase
@@ -171,14 +172,14 @@ export async function cacheStreetViewImagesForAllCommunityAreas() {
   let updatedCentroids = 0;
   const rowsToInsert = [];
 
-  for (const centroid of localCentroids) {
+  for (const centroid of allCoords) {
     const area = areasByNumber.get(centroid.communityAreaNumber);
     if (!area) continue;
 
     if (!hasCoordinate(area)) {
       const { error } = await supabase
         .from("community_areas")
-        .update({ centroid_lat: centroid.latitude, centroid_lng: centroid.longitude })
+        .update({ centroid_lat: centroid.lat, centroid_lng: centroid.lng })
         .eq("id", area.id);
       if (error) throw new Error(`Failed to update centroid for ${area.name}: ${error.message}`);
       updatedCentroids += 1;
@@ -189,12 +190,12 @@ export async function cacheStreetViewImagesForAllCommunityAreas() {
     rowsToInsert.push({
       city_id: cityId,
       community_area_id: area.id,
-      latitude: centroid.latitude,
-      longitude: centroid.longitude,
+      latitude: centroid.lat,
+      longitude: centroid.lng,
       heading: STREET_VIEW_HEADING,
       pitch: STREET_VIEW_PITCH,
       fov: STREET_VIEW_FOV,
-      image_url: buildStreetViewStaticUrl(centroid.latitude, centroid.longitude, apiKey),
+      image_url: buildStreetViewStaticUrl(centroid.lat, centroid.lng, apiKey),
       metadata: {
         source: "google_street_view_static",
         community_area_number: centroid.communityAreaNumber,
@@ -211,7 +212,7 @@ export async function cacheStreetViewImagesForAllCommunityAreas() {
   }
 
   return {
-    communityAreasInCsv: localCentroids.length,
+    communityAreasInCsv: allCoords.length,
     cachedBefore: cachedCommunityAreaIds.size,
     cachedNow: rowsToInsert.length,
     updatedCentroids,
