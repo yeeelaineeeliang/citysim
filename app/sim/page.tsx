@@ -1,8 +1,8 @@
-// TODO: add auth.protect() once Clerk account + keys are configured
-// import { auth } from "@clerk/nextjs/server";
-
+import { auth } from "@clerk/nextjs/server";
 import { SimClient } from "./SimClient";
 
-export default function SimPage() {
+export default async function SimPage() {
+  await auth.protect();
+
   return <SimClient />;
 }

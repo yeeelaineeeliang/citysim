@@ -11,7 +11,14 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
   return (
     <html lang="en" data-scroll-behavior="smooth">
       <body>
-        <ClerkProvider>{children}</ClerkProvider>
+        <ClerkProvider
+          signInUrl="/sign-in"
+          signUpUrl="/sign-up"
+          signInFallbackRedirectUrl="/sim"
+          signUpFallbackRedirectUrl="/sim"
+        >
+          {children}
+        </ClerkProvider>
       </body>
     </html>
   );

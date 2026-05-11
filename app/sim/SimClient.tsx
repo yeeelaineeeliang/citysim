@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { AuthActions } from "@/components/AuthActions";
 import { Skybox } from "@/components/Skybox";
 import type { ChatMessage, UserProfile } from "@/lib/tools/types";
 import { OnboardingProfileForm } from "./OnboardingProfileForm";
@@ -97,15 +98,25 @@ export function SimClient() {
       <main className="relative min-h-screen overflow-hidden bg-[color:var(--background)] px-6 py-8 text-[color:var(--foreground)]">
         {/* Skybox background on onboarding */}
         <div aria-hidden="true" className="absolute inset-0">
-          <Skybox month={6} crimeSignal={0} serviceSignal={null} transitSignal={0} fullBleed />
+          <Skybox
+            month={6}
+            crimeSignal={0}
+            serviceSignal={null}
+            transitSignal={0}
+            fullBleed
+            showElements={false}
+          />
         </div>
 
         <div className="relative z-10 mx-auto flex w-full max-w-3xl flex-col gap-8">
           <header>
-            <p className="text-xs font-semibold uppercase tracking-[0.28em] text-white/80">
-              CityLiving Sim
-            </p>
-            <h1 className="mt-2 text-3xl font-semibold text-white">
+            <div className="flex items-center justify-between gap-4 rounded-full border border-white/20 bg-white/10 px-4 py-3 shadow-sm backdrop-blur-md">
+              <p className="text-[13px] font-black uppercase tracking-[0.22em] text-white [text-shadow:0_1px_2px_rgba(0,0,0,0.35)]">
+                CITYLIVING SIM
+              </p>
+              <AuthActions />
+            </div>
+            <h1 className="mt-6 text-3xl font-semibold text-white">
               Set up your living profile
             </h1>
           </header>
@@ -129,45 +140,50 @@ export function SimClient() {
     <div className="flex h-screen flex-col bg-[color:var(--background)] text-[color:var(--foreground)]">
 
       {/* Top bar: neighborhood + month strip */}
-      <header className="flex flex-col gap-2 border-b border-[color:var(--panel-border)] bg-[color:var(--panel)] px-4 py-3 sm:flex-row sm:items-center sm:gap-4">
-        <div className="flex shrink-0 items-center gap-2">
-          <label className="text-xs font-semibold uppercase tracking-[0.18em] text-[color:var(--muted)]">
-            Neighborhood
-          </label>
-          <input
-            type="text"
-            value={neighborhood}
-            onChange={(e) => {
-              setNeighborhood(e.target.value);
-              setMessages([]); // reset chat on neighborhood change
-            }}
-            className="w-36 rounded-lg border border-[color:var(--panel-border)] bg-white px-2 py-1 text-sm outline-none focus:border-[color:var(--accent)]"
-          />
+      <header className="flex flex-col gap-3 border-b border-[color:var(--panel-border)] bg-[color:var(--panel)] px-4 py-3 sm:flex-row sm:items-center sm:gap-4">
+        <div className="flex flex-1 flex-col gap-3 sm:flex-row sm:items-center sm:gap-4">
+          <div className="flex shrink-0 items-center gap-2">
+            <label className="text-xs font-semibold uppercase tracking-[0.18em] text-[color:var(--muted)]">
+              Neighborhood
+            </label>
+            <input
+              type="text"
+              value={neighborhood}
+              onChange={(e) => {
+                setNeighborhood(e.target.value);
+                setMessages([]); // reset chat on neighborhood change
+              }}
+              className="w-36 rounded-lg border border-[color:var(--panel-border)] bg-white px-2 py-1 text-sm outline-none focus:border-[color:var(--accent)]"
+            />
+          </div>
+
+          {/* Month strip */}
+          <div className="flex flex-1 gap-0.5 overflow-x-auto">
+            {MONTH_SHORT.map((name, i) => (
+              <button
+                key={name}
+                onClick={() => setMonth(i + 1)}
+                className={`shrink-0 rounded px-2 py-1 text-xs font-medium transition-colors ${
+                  month === i + 1
+                    ? "bg-[color:var(--accent)] text-white"
+                    : "text-[color:var(--muted)] hover:bg-[color:var(--panel-border)]"
+                }`}
+              >
+                {name}
+              </button>
+            ))}
+          </div>
         </div>
 
-        {/* Month strip */}
-        <div className="flex flex-1 gap-0.5 overflow-x-auto">
-          {MONTH_SHORT.map((name, i) => (
-            <button
-              key={name}
-              onClick={() => setMonth(i + 1)}
-              className={`shrink-0 rounded px-2 py-1 text-xs font-medium transition-colors ${
-                month === i + 1
-                  ? "bg-[color:var(--accent)] text-white"
-                  : "text-[color:var(--muted)] hover:bg-[color:var(--panel-border)]"
-              }`}
-            >
-              {name}
-            </button>
-          ))}
+        <div className="flex shrink-0 items-center gap-3">
+          <button
+            onClick={() => setStep("profile")}
+            className="text-xs text-[color:var(--muted)] hover:text-[color:var(--foreground)]"
+          >
+            ← Edit profile
+          </button>
+          <AuthActions className="border-[color:var(--panel-border)] bg-white/45" />
         </div>
-
-        <button
-          onClick={() => setStep("profile")}
-          className="shrink-0 text-xs text-[color:var(--muted)] hover:text-[color:var(--foreground)]"
-        >
-          ← Edit profile
-        </button>
       </header>
 
       {/* Chat area */}

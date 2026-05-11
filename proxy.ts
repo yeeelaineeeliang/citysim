@@ -1,11 +1,11 @@
 import { clerkMiddleware } from "@clerk/nextjs/server";
 
-// All routes are public until Clerk account + keys are fully configured.
-// TODO: re-enable route protection once sign-in/sign-up pages exist:
-//   const isProtected = createRouteMatcher(["/sim/saved(.*)", "/api/profile(.*)"])
-//   return clerkMiddleware(async (auth, req) => { if (isProtected(req)) await auth.protect() })
-
-export default clerkMiddleware();
+// Route-level protection lives in the page or route handler. These URLs keep
+// auth.protect() redirects inside the local Next app instead of Clerk's hosted UI.
+export default clerkMiddleware({
+  signInUrl: "/sign-in",
+  signUpUrl: "/sign-up",
+});
 
 export const config = {
   matcher: [
