@@ -6,7 +6,64 @@
  */
 
 import { createSupabaseAdminClient, hasSupabaseCredentials } from "@/lib/supabase";
+import { getAllCoordinates } from "@/lib/neighborhoodCoordinates";
 import type { UserProfile } from "@/lib/tools/types";
+
+// ─── Workplace proximity ──────────────────────────────────────────────────────
+
+const KNOWN_WORKPLACES: Record<string, { lat: number; lng: number }> = {
+  "uchicago":                    { lat: 41.7886, lng: -87.5987 },
+  "university of chicago":       { lat: 41.7886, lng: -87.5987 },
+  "downtown":                    { lat: 41.8781, lng: -87.6298 },
+  "loop":                        { lat: 41.8781, lng: -87.6298 },
+  "the loop":                    { lat: 41.8781, lng: -87.6298 },
+  "chicago loop":                { lat: 41.8781, lng: -87.6298 },
+  "magnificent mile":            { lat: 41.8919, lng: -87.6246 },
+  "mag mile":                    { lat: 41.8919, lng: -87.6246 },
+  "river north":                 { lat: 41.8936, lng: -87.6338 },
+  "wrigleyville":                { lat: 41.9484, lng: -87.6553 },
+  "wrigley field":               { lat: 41.9484, lng: -87.6553 },
+  "ohare":                       { lat: 41.9742, lng: -87.9073 },
+  "o'hare":                      { lat: 41.9742, lng: -87.9073 },
+  "midway":                      { lat: 41.7868, lng: -87.7522 },
+  "illinois medical district":   { lat: 41.8735, lng: -87.6746 },
+  "medical district":            { lat: 41.8735, lng: -87.6746 },
+  "northwestern":                { lat: 41.8923, lng: -87.6098 },
+  "northwestern university":     { lat: 41.8923, lng: -87.6098 },
+  "uic":                         { lat: 41.8716, lng: -87.6491 },
+  "loyola":                      { lat: 42.0006, lng: -87.6615 },
+  "illinois tech":               { lat: 41.8348, lng: -87.6274 },
+  "iit":                         { lat: 41.8348, lng: -87.6274 },
+  "depaul":                      { lat: 41.9247, lng: -87.6559 },
+};
+
+function resolveWorkplaceCoords(profile: MatchUserProfile): { lat: number; lng: number } | null {
+  // Prefer geocoded coordinates stored directly on the profile (set by the form combobox)
+  const p = profile as UserProfile;
+  if (typeof p.workplaceLat === "number" && typeof p.workplaceLng === "number" &&
+      Number.isFinite(p.workplaceLat) && Number.isFinite(p.workplaceLng)) {
+    return { lat: p.workplaceLat, lng: p.workplaceLng };
+  }
+  // Fall back to the lookup table for profiles without geocoded coordinates
+  const workplace = ("workplace" in profile ? p.workplace : "") ?? "";
+  if (!workplace.trim()) return null;
+  const key = workplace.toLowerCase().trim().replace(/[.,]/g, "").replace(/\s+/g, " ");
+  if (KNOWN_WORKPLACES[key]) return KNOWN_WORKPLACES[key];
+  for (const [k, coords] of Object.entries(KNOWN_WORKPLACES)) {
+    if (key.includes(k) || k.includes(key)) return coords;
+  }
+  return null;
+}
+
+function distanceMiles(a: { lat: number; lng: number }, b: { lat: number; lng: number }): number {
+  const R = 3958.8;
+  const dLat = ((b.lat - a.lat) * Math.PI) / 180;
+  const dLng = ((b.lng - a.lng) * Math.PI) / 180;
+  const sinLat = Math.sin(dLat / 2);
+  const sinLng = Math.sin(dLng / 2);
+  const h = sinLat * sinLat + Math.cos((a.lat * Math.PI) / 180) * Math.cos((b.lat * Math.PI) / 180) * sinLng * sinLng;
+  return R * 2 * Math.asin(Math.sqrt(h));
+}
 
 type CommutePreference = UserProfile["commutePref"];
 type MatchDimension = "safety" | "transit" | "affordability" | "cityServices" | "entertainment";
@@ -76,6 +133,7 @@ export interface NeighborhoodMatch {
   name: string;
   slug?: string;
   descriptors: string[];
+  matchReason: string;
 }
 
 type ScoringContext = {
@@ -83,6 +141,8 @@ type ScoringContext = {
     budgetCeiling: number | null;
     commutePreference: CommutePreference;
     weights: Record<MatchDimension, number>;
+    workplaceName: string | null;
+    shortCommuteMode: boolean;
   };
   ranges: Record<MatchDimension | "commuteMinutes", { min: number; max: number }>;
 };
@@ -95,9 +155,10 @@ interface AreaRow {
   descriptors: string[] | null;
 }
 
-interface StatsRow {
-  neighborhood_id: number;
-  affordable_housing_units: number;
+interface HousingRow {
+  community_area_id: string;
+  affordable_units: number;
+  avg_rent_estimate: number | null;
 }
 
 interface CrimeRow {
@@ -253,11 +314,21 @@ function rangeFor(values: Array<number | null>) {
 
 function buildScoringContext(profile: MatchUserProfile, neighborhoods: NeighborhoodData[]): ScoringContext {
   const commutePreference = getCommutePreference(profile);
+  const workplaceName =
+    "workplace" in profile && typeof (profile as UserProfile).workplace === "string"
+      ? ((profile as UserProfile).workplace.trim() || null)
+      : null;
+  const lifestyle =
+    "lifestyle" in profile && Array.isArray((profile as UserProfile).lifestyle)
+      ? (profile as UserProfile).lifestyle
+      : [];
   return {
     profile: {
       budgetCeiling: parseBudgetCeiling(profile),
       commutePreference,
       weights: normalizeWeights(profile),
+      workplaceName,
+      shortCommuteMode: lifestyle.includes("Short commute"),
     },
     ranges: {
       safety: rangeFor(neighborhoods.map((n) => rawDimensionValue(n, "safety"))),
@@ -293,8 +364,14 @@ function dimensionScore(
   if (dimension === "transit") {
     const minutes = getCommuteMinutes(neighborhood, context.profile.commutePreference);
     if (minutes === null) return normalizedRaw;
-    const commuteFit = 1 - normalize(minutes, context.ranges.commuteMinutes.min, context.ranges.commuteMinutes.max);
-    return normalizedRaw * 0.7 + commuteFit * 0.3;
+    const shortCommute = context.profile.shortCommuteMode;
+    // "Short commute" lifestyle tag: steeper exponential decay + commute dominates transit infrastructure
+    const decayConstant = shortCommute ? 15 : 30;
+    const commuteFitWeight = shortCommute ? 0.85 : 0.65;
+    const relativeCommuteFit = 1 - normalize(minutes, context.ranges.commuteMinutes.min, context.ranges.commuteMinutes.max);
+    const absolutePenalty = Math.exp(-minutes / decayConstant);
+    const commuteFit = relativeCommuteFit * 0.6 + absolutePenalty * 0.4;
+    return normalizedRaw * (1 - commuteFitWeight) + commuteFit * commuteFitWeight;
   }
 
   return normalizedRaw;
@@ -319,28 +396,67 @@ function buildMatchDescriptors(
   neighborhood: NeighborhoodData,
   componentScores: Record<MatchDimension, number>,
   context: ScoringContext,
-) {
-  const weightedDimensions = DIMENSIONS
-    .map((dimension) => ({
-      dimension,
-      value: componentScores[dimension] * context.profile.weights[dimension],
-    }))
-    .sort((a, b) => b.value - a.value);
-
+): string[] {
   const labels: string[] = [];
-  const rentFit = budgetFit(neighborhood, context.profile.budgetCeiling);
+  const commuteMin = getCommuteMinutes(neighborhood, context.profile.commutePreference);
+  const rent = getRent(neighborhood);
+  const budget = context.profile.budgetCeiling;
 
-  if (rentFit !== null && rentFit >= 0.98) labels.push("Fits budget");
-
-  for (const { dimension } of weightedDimensions) {
-    if (dimension === "safety") labels.push(componentScores.safety > 0.72 ? "Quiet" : "Safety fit");
-    if (dimension === "transit") labels.push(componentScores.transit > 0.72 ? "Transit-rich" : "Commute fit");
-    if (dimension === "affordability") labels.push("Affordable");
-    if (dimension === "cityServices") labels.push("Responsive city services");
-    if (dimension === "entertainment") labels.push("Dining & nightlife");
+  if (commuteMin !== null) {
+    const name = context.profile.workplaceName;
+    labels.push(name ? `~${commuteMin} min from ${name}` : `~${commuteMin} min commute`);
   }
 
-  return mergeDescriptors(labels, neighborhood.descriptors);
+  if (rent !== null && rent > 0) {
+    if (budget !== null && rent <= budget) {
+      labels.push(`Est. $${rent.toLocaleString()}/mo — fits your budget`);
+    } else if (budget !== null && rent > budget) {
+      labels.push(`Est. $${rent.toLocaleString()}/mo — over budget`);
+    }
+  } else if (budgetFit(neighborhood, budget) !== null) {
+    labels.push("Fits budget");
+  }
+
+  if (componentScores.safety > 0.68) labels.push("Low crime rate");
+  else if (componentScores.safety < 0.35) labels.push("Higher crime area");
+
+  if (commuteMin === null && componentScores.transit > 0.7) labels.push("Strong transit access");
+  if (componentScores.entertainment > 0.75) labels.push("Active dining scene");
+  if (componentScores.cityServices > 0.75) labels.push("Fast city services");
+
+  return labels.slice(0, 3);
+}
+
+function buildMatchReason(
+  neighborhood: NeighborhoodData,
+  componentScores: Record<MatchDimension, number>,
+  context: ScoringContext,
+): string {
+  const parts: string[] = [];
+  const commuteMin = getCommuteMinutes(neighborhood, context.profile.commutePreference);
+  const rent = getRent(neighborhood);
+  const budget = context.profile.budgetCeiling;
+
+  if (commuteMin !== null) {
+    const name = context.profile.workplaceName;
+    parts.push(name ? `~${commuteMin} min from ${name}` : `~${commuteMin} min commute`);
+  }
+
+  if (rent !== null && rent > 0 && budget !== null && rent <= budget) {
+    parts.push(`est. $${rent.toLocaleString()}/mo`);
+  }
+
+  if (componentScores.safety > 0.68) parts.push("low crime");
+  else if (componentScores.safety < 0.35) parts.push("higher crime — check the data");
+
+  if (commuteMin === null && componentScores.transit > 0.65) parts.push("strong transit access");
+  if (componentScores.entertainment > 0.75) parts.push("active dining & nightlife");
+  if (componentScores.cityServices > 0.75) parts.push("fast city services");
+
+  if (parts.length === 0) return "Matches your priority settings";
+
+  const sentence = parts.join(" · ");
+  return sentence.charAt(0).toUpperCase() + sentence.slice(1);
 }
 
 /**
@@ -376,15 +492,17 @@ export function rankNeighborhoodMatches(
         index,
         fitScore,
         descriptors: buildMatchDescriptors(neighborhood, componentScores, context),
+        matchReason: buildMatchReason(neighborhood, componentScores, context),
       };
     })
     .sort((a, b) => b.fitScore - a.fitScore || a.index - b.index)
     .slice(0, topN)
-    .map(({ neighborhood, descriptors }) => ({
+    .map(({ neighborhood, descriptors, matchReason }) => ({
       communityAreaNumber: neighborhood.communityAreaNumber,
       name: neighborhood.name,
       slug: neighborhood.slug,
       descriptors,
+      matchReason,
     }));
 }
 
@@ -399,13 +517,13 @@ function toNeighborhoodData(
   transitByAreaId: Map<string, number>,
   responseDaysByAreaId: Map<string, number>,
   entertainmentByAreaId: Map<string, number>,
-  affordableUnitsByNumber: Map<number, number>,
+  rentByAreaId: Map<string, number | null>,
 ): NeighborhoodData[] {
   const avgCrime = avg([...crimeByAreaId.values()].filter((value) => value > 0));
   const avgTransit = avg([...transitByAreaId.values()].filter((value) => value > 0));
   const avgResponse = avg([...responseDaysByAreaId.values()].filter((value) => value > 0));
   const avgEntertainment = avg([...entertainmentByAreaId.values()].filter((value) => value > 0));
-  const avgAffordable = avg([...affordableUnitsByNumber.values()].filter((value) => value > 0));
+  const avgRent = avg([...rentByAreaId.values()].filter((v): v is number => v !== null && v > 0));
 
   return areas.map((area) => {
     const areaId = areaIdByNumber.get(area.community_area_number);
@@ -413,8 +531,7 @@ function toNeighborhoodData(
     const transit = areaId ? transitByAreaId.get(areaId) : undefined;
     const responseDays = areaId ? responseDaysByAreaId.get(areaId) : undefined;
     const entertainment = areaId ? entertainmentByAreaId.get(areaId) : undefined;
-    // More affordable_housing_units = more affordable options in the area
-    const affordableUnits = affordableUnitsByNumber.get(area.community_area_number) ?? avgAffordable;
+    const rent = areaId ? (rentByAreaId.get(areaId) ?? null) : null;
 
     return {
       communityAreaNumber: area.community_area_number,
@@ -424,10 +541,11 @@ function toNeighborhoodData(
       scores: {
         crime: crime ?? avgCrime,
         transit: transit ?? avgTransit,
-        affordability: affordableUnits,
+        // affordability omitted — rawDimensionValue falls through to -rent from housing
         cityServices: responseDays === undefined ? -avgResponse : -responseDays,
         entertainment: entertainment ?? avgEntertainment,
       },
+      housing: { averageRent: rent ?? avgRent },
     };
   });
 }
@@ -458,7 +576,7 @@ export async function matchNeighborhoods(
   const year = 2024;
   const month = 10;
 
-  const [crimeRes, transitRes, serviceRes, entRes, statsRes] = await Promise.all([
+  const [crimeRes, transitRes, serviceRes, entRes, housingRes] = await Promise.all([
     supabase
       .from("crime_monthly")
       .select("community_area_id, incident_count")
@@ -491,12 +609,22 @@ export async function matchNeighborhoods(
       .in("community_area_id", allIds)
       .returns<EntRow[]>(),
     supabase
-      .from("neighborhood_stats")
-      .select("neighborhood_id, affordable_housing_units")
-      .returns<StatsRow[]>(),
+      .from("housing_metrics")
+      .select("community_area_id, affordable_units, avg_rent_estimate")
+      .eq("city_id", cityId)
+      .eq("year", year)
+      .in("community_area_id", allIds)
+      .returns<HousingRow[]>(),
   ]);
 
-  const crimeByAreaId = new Map((crimeRes.data ?? []).map((row) => [row.community_area_id, row.incident_count]));
+  const populationById = new Map(areas.map((a) => [a.id, a.population]));
+  const crimeByAreaId = new Map(
+    (crimeRes.data ?? []).map((row) => {
+      const pop = populationById.get(row.community_area_id);
+      const rate = pop && pop > 0 ? (row.incident_count / pop) * 10_000 : row.incident_count;
+      return [row.community_area_id, rate];
+    }),
+  );
   const transitByAreaId = new Map(
     (transitRes.data ?? []).map((row) => [row.community_area_id, row.bus_ridership + row.l_ridership]),
   );
@@ -504,22 +632,40 @@ export async function matchNeighborhoods(
   const entertainmentByAreaId = new Map(
     (entRes.data ?? []).map((row) => [row.community_area_id, row.restaurants + row.bars]),
   );
-  // neighborhood_stats uses community_area_number as neighborhood_id
-  const affordableUnitsByNumber = new Map(
-    (statsRes.data ?? []).map((row) => [row.neighborhood_id, row.affordable_housing_units]),
+  const rentByAreaId = new Map(
+    (housingRes.data ?? []).map((row) => [row.community_area_id, row.avg_rent_estimate]),
   );
 
-  return rankNeighborhoodMatches(
-    profile,
-    toNeighborhoodData(
-      areas,
-      areaIdByNumber,
-      crimeByAreaId,
-      transitByAreaId,
-      responseDaysByAreaId,
-      entertainmentByAreaId,
-      affordableUnitsByNumber,
-    ),
-    topN,
+  let neighborhoods = toNeighborhoodData(
+    areas,
+    areaIdByNumber,
+    crimeByAreaId,
+    transitByAreaId,
+    responseDaysByAreaId,
+    entertainmentByAreaId,
+    rentByAreaId,
   );
+
+  // Blend workplace proximity into commute dimension when workplace is recognized.
+  // Uses straight-line distance with Chicago-typical speed proxies:
+  //   transit  ≈ 8 min/mile  (accounts for waiting, transfers, indirect routing)
+  //   driving  ≈ 4 min/mile  (Chicago average ~15 mph in traffic)
+  const workplaceCoords = resolveWorkplaceCoords(profile);
+  if (workplaceCoords) {
+    const coordByNumber = new Map(getAllCoordinates().map((c) => [c.communityAreaNumber, c]));
+    neighborhoods = neighborhoods.map((n) => {
+      const coord = coordByNumber.get(n.communityAreaNumber);
+      if (!coord) return n;
+      const miles = distanceMiles(workplaceCoords, { lat: coord.lat, lng: coord.lng });
+      return {
+        ...n,
+        commute: {
+          transitMinutes: Math.round(miles * 8),
+          drivingMinutes: Math.round(miles * 4),
+        },
+      };
+    });
+  }
+
+  return rankNeighborhoodMatches(profile, neighborhoods, topN);
 }

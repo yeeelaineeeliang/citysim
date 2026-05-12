@@ -15,4 +15,5 @@ dist
 tsconfig.tsbuildinfo
 /CityData
 crime_prediction_week7.ipynb
-v2report.md
+/reports
+NEWCityLivingSim_ProjectOverview copy.md

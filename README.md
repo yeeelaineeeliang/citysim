@@ -1,117 +1,110 @@
 # CityLiving Sim
 
-> Experience a neighborhood before you sign a lease.
+**Feel a neighborhood before you sign a lease.**
 
-CityLiving Sim is a neighborhood life simulator for people deciding where to live in Chicago. Instead of static scores (Zillow, Niche, Trulia), it places the user *inside* a neighborhood and runs a year-long simulation of what daily life there actually feels like — grounded in real civic data, never invented.
+CityLiving Sim helps people choose where to live in Chicago by turning civic data into a practical, personal preview of daily life. Instead of scanning static scores or generic neighborhood blurbs, users enter their budget, workplace, commute preference, and lifestyle priorities, then explore how a neighborhood would actually work for them.
 
-The user sets a personal profile (budget, workplace, commute preference, lifestyle priorities), selects a neighborhood, and gets a month-by-month simulated year rendered as a second-person narrative. Every answer the conversational agent gives is assembled from real queried data. The agent narrates data — it does not hallucinate it.
+The product combines maps, Street View imagery, neighborhood matching, and a grounded AI advisor. It can answer questions like:
 
-**Mental model:** closer to Google Street View than to Zillow. You are spatially located inside the neighborhood, not evaluating it from outside.
+- Can I afford to live here?
+- What would my commute to UChicago feel like?
+- Is this neighborhood safe at night?
+- How responsive is the city when things break?
+- What would a normal month here look like?
 
----
+Every civic answer is backed by tool-returned data. If the data is sparse, the app says so instead of filling the gap with confident fiction.
 
-## Architecture
+## Why It Is Useful
 
+Choosing a neighborhood is not just a rent calculation. It is commute friction, street safety, city services, transit reliability, local amenities, and the feel of ordinary routines.
+
+CityLiving Sim brings those pieces together in one place:
+
+- **Personal fit:** budget, workplace, commute mode, and priorities shape the recommendation.
+- **Grounded answers:** the chat agent must query structured tools before narrating.
+- **Lived-experience output:** numbers are translated into practical signals, not dumped as raw stats.
+- **Spatial context:** neighborhood maps and Street View help users inspect where they might live.
+- **Chicago-wide coverage:** all 77 community areas are represented.
+
+## Product Flow
+
+1. Create a profile with budget, workplace, commute preference, and lifestyle priorities.
+2. Get matched with neighborhoods or choose one manually.
+3. Explore the neighborhood on a map with workplace context.
+4. Move through a month-by-month simulation.
+5. Ask grounded follow-up questions about safety, affordability, commute, housing, 311, and amenities.
+
+## How It Works
+
+CityLiving Sim uses a tool-first agent architecture:
+
+```text
+User profile + selected neighborhood
+        |
+        v
+Question router
+        |
+        v
+Structured tools
+  - crime
+  - housing
+  - transit
+  - commute
+  - 311 services
+  - entertainment
+  - neighborhood profile
+        |
+        v
+Grounded narrative response
 ```
-User Profile (budget · workplace · commute · priorities · lifestyle)
-        +
-Selected Neighborhood (community area)
-        │
-        ▼
-┌──────────────────────────────────────────────┐
-│              Simulation Engine               │
-│                                              │
-│  1. Route question to tool(s)                │
-│     - query_crime(neighborhood, month)       │
-│     - query_transit(neighborhood, month)     │
-│     - query_311(neighborhood, month)         │
-│     - query_housing(neighborhood)            │
-│     - query_entertainment(neighborhood)      │
-│     - get_neighborhood_profile(neighborhood) │
-│  2. Query Supabase with structured params    │
-│  3. Receive real data results                │
-│  4. Assemble context for LLM                 │
-│  5. LLM narrates in second-person present    │
-│  6. Return grounded narrative response       │
-└──────────────────────────────────────────────┘
-        │
-        ▼
-Month-by-month simulation output:
-  · Second-person narrative ("your commute," "your block")
-  · No raw numbers as headlines — experience language only
-  · Session history accumulates across months
-  · Year summary at month 12
-```
 
-**Hallucination guardrail:** The agent cannot answer a civic question without first calling a tool and receiving real data. Empty results surface explicitly ("311 data for this neighborhood in this month is sparse") rather than silently filling in.
-
-**Data sources:**
-
-*Local CSVs — already downloaded, $0, processed via PySpark:*
-- Crimes — 2001 to Present
-- 311 Service Requests
-- Affordable Rental Housing Developments
-- Boundaries — Community Areas
-- CCA 2025
-- CTA L Station Entries — Daily Totals
-- CTA L Station Entries — Monthly Day-Type Averages & Totals
-- CTA Bus Routes — Daily Totals by Route
-- CTA L Stops
-
-*Chicago Data Portal — API or direct download, $0:*
-
-- Business Licenses (Active) — `uupf-x98q` — restaurants & bars by neighborhood
-- Chicago Parks (CPD) — `ejsh-fztr` — park amenities
-- Library Locations & Hours — `x8fc-8rcq` — civic amenity proximity
-- Farmers Markets — `atzs-u7pv` — lifestyle signal (deferred)
-
-*External APIs:*
-
-- Ticketmaster Discovery API — local events (deferred, free tier)
-- Google Maps Street View Static API — neighborhood visual layer (pay-as-you-go, ~$0 with free trial credit)
-
-**Narrative generation** (three-tier cascade):
-1. Groq — `llama-3.3-70b-versatile` (primary, free tier)
-2. Anthropic — `claude-haiku-4-5-20251001` (secondary)
-3. Deterministic fallback — no API key required
-
----
+The agent is designed to be direct and useful. For example, affordability answers compare the user budget to loaded rent estimates and clarify that subsidized-housing counts are database stock, not current vacancies. Commute answers separate neighborhood transit access from exact door-to-door route planning.
 
 ## Tech Stack
 
 | Layer | Technology |
 |---|---|
-| Framework | Next.js (App Router) |
-| Language | TypeScript (strict) |
-| Styling | Tailwind CSS + shadcn/ui |
-| Database | Supabase (Postgres) |
+| App framework | Next.js App Router |
+| Language | TypeScript |
+| UI | React, Tailwind CSS |
 | Auth | Clerk |
-| LLM (primary) | Groq — `llama-3.3-70b-versatile` |
-| LLM (fallback) | Anthropic — `claude-haiku-4-5-20251001` |
-| Visual layer | Google Maps Street View Static API (cached in Supabase) |
-| Data pipeline | PySpark (local processing of raw CSVs) |
-| Deployment | Vercel |
+| Database | Supabase Postgres |
+| Maps | React Leaflet, OpenStreetMap |
+| Street imagery | Google Maps Street View Static API |
+| Geocoding | Photon / OpenStreetMap |
+| LLM | Groq primary, optional Anthropic fallback, deterministic fallback |
+| Data pipeline | PySpark and Chicago civic datasets |
 
----
+## Data Sources
 
-## Getting Started
+The app uses Chicago civic data, including:
+
+- Crimes
+- 311 service requests
+- Affordable rental housing developments
+- CTA rail and bus ridership
+- CTA stops and route data
+- Community area boundaries
+- Business licenses, parks, libraries, and amenity data
+
+The product is built for decision support, not legal, financial, or real estate advice. Live rental availability, lease terms, exact CTA routing, and current safety conditions should still be checked before making a housing decision.
+
+## Run Locally
 
 ```bash
 npm install
-cp .env.example .env.local   # fill in required keys (see below)
+cp .env.example .env.local
 npm run dev
 ```
 
-Open `localhost:3000/sim` → set your profile → pick a neighborhood → start simulating.
-
----
+Open [http://localhost:3000/sim](http://localhost:3000/sim).
 
 ## Environment Variables
 
-```
+```bash
 # LLM
-GROQ_API_KEY=                        # primary (free at console.groq.com)
-ANTHROPIC_API_KEY=                   # fallback
+GROQ_API_KEY=
+ANTHROPIC_API_KEY=
 
 # Supabase
 SUPABASE_URL=
@@ -123,28 +116,28 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=
 NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=
 CLERK_SECRET_KEY=
 
-# Google Maps
-NEXT_PUBLIC_GOOGLE_MAPS_API_KEY=     # Street View Static API only — restrict to Websites
+# Street View
+NEXT_PUBLIC_GOOGLE_MAPS_API_KEY=
 
-# Optional
-SOCRATA_APP_TOKEN=                   # increases Socrata rate limits
+# Optional civic API rate-limit helper
+SOCRATA_APP_TOKEN=
 ```
 
----
+The app can still return deterministic fallback responses when LLM keys are missing, but the full AI advisor experience requires `GROQ_API_KEY`.
 
-## Current State (Week 2 of 4)
+## Scripts
 
-**Exists (v1 pipeline proof):**
-- Hyde Park · full year 2024 · 3 data sources (crime, 311, CTA transit)
-- LLM narrative with three-tier fallback + grounding/citation validation
-- Two UIs: `/v2` (static 12-month card view) and `/prototype` (conversational flow, Hyde Park only)
+```bash
+npm run dev              # start local development server
+npm run build            # production build
+npm run start            # run production server
+npm run typecheck        # TypeScript check
+npm test                 # Node test runner
+npm run ingest:v1        # ingest CTA proof dataset
+npm run preprocess       # preprocess local civic data
+npm run cache:street-view # cache Street View imagery
+```
 
-**Being built now (Week 2):**
-- Full Supabase schema (12+ tables for all data categories)
-- LLM tool-use agent (6 named tools, strict tool-call requirement before any civic response)
-- User profile onboarding (budget, workplace, commute preference, lifestyle checkboxes, free-text notes)
-- Neighborhood selector (all 77 Chicago community areas)
-- Street View Static API integration with Supabase cache; Skybox gradient as fallback
-- New `/sim` route: profile → pick/match neighborhood → month timeline → grounded chat
+## Status
 
-**Week 2 end goal:** Hyde Park works end-to-end. Profile → pick neighborhood → ask a question → get a real grounded answer with Street View image.
+CityLiving Sim currently supports the core simulation loop: profile onboarding, workplace geocoding, neighborhood matching, interactive maps, month-based exploration, Street View context, and grounded chat. The next product step is a polished demo mode with pre-validated neighborhood Q&A for fast review and presentation.

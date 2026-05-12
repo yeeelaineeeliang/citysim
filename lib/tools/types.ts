@@ -1,6 +1,8 @@
 export interface UserProfile {
   budgetRange: string
   workplace: string
+  workplaceLat?: number
+  workplaceLng?: number
   commutePref: 'transit' | 'driving' | 'walking' | 'biking'
   priorities: {
     safety: number
@@ -24,8 +26,28 @@ export interface CrimeResult {
 export interface TransitResult {
   l_ridership: number
   bus_ridership: number
+  metra_ridership: number
   crowding_level: 'low' | 'moderate' | 'high' | 'very_high'
+  avg_peak_wait_minutes: number | null
+  route_summary: Record<string, unknown>
   stops: string[]
+  note?: string
+}
+
+export interface CommuteResult {
+  origin_neighborhood: string
+  destination: string
+  mode: UserProfile['commutePref']
+  distance_miles: number | null
+  estimated_minutes: number | null
+  estimates: {
+    transit_minutes: number | null
+    driving_minutes: number | null
+    walking_minutes: number | null
+    biking_minutes: number | null
+  }
+  confidence: 'low' | 'medium'
+  note: string
 }
 
 export interface ServiceResult {
@@ -36,7 +58,10 @@ export interface ServiceResult {
 
 export interface HousingResult {
   affordable_units: number
+  affordable_developments: number
   avg_rent_estimate: number
+  median_rent_estimate: number | null
+  note?: string
 }
 
 export interface EntertainmentResult {
@@ -56,6 +81,7 @@ export interface NeighborhoodProfile {
 export type ToolResult =
   | CrimeResult
   | TransitResult
+  | CommuteResult
   | ServiceResult
   | HousingResult
   | EntertainmentResult

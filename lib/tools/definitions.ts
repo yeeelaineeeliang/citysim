@@ -23,7 +23,7 @@ export const TOOL_DEFINITIONS: Groq.Chat.Completions.ChatCompletionTool[] = [
     function: {
       name: 'query_transit',
       description:
-        'Get CTA transit data for a Chicago neighborhood in a specific month. Use for questions about commute, buses, trains, L stops, CTA ridership, crowding, or getting around the city.',
+        'Get neighborhood-level CTA transit access, ridership, stop, wait, and crowding data for a Chicago neighborhood in a specific month. Use for questions about buses, trains, L stops, CTA ridership, crowding, or transit access. This is not a door-to-door route planner.',
       parameters: {
         type: 'object',
         properties: {
@@ -31,6 +31,25 @@ export const TOOL_DEFINITIONS: Groq.Chat.Completions.ChatCompletionTool[] = [
           month: { type: 'number', description: 'Month number 1–12' },
         },
         required: ['neighborhood', 'month'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'query_commute',
+      description:
+        'Get a coarse commute estimate from a Chicago neighborhood to the user workplace using community-area and workplace coordinates. Use with query_transit for commute, route, or getting-to-work questions. This does not provide exact CTA stops or transfers.',
+      parameters: {
+        type: 'object',
+        properties: {
+          neighborhood: { type: 'string', description: 'Chicago community area name' },
+          workplace: { type: 'string', description: 'Destination workplace or school from the user profile' },
+          workplaceLat: { type: 'number', description: 'Optional geocoded workplace latitude' },
+          workplaceLng: { type: 'number', description: 'Optional geocoded workplace longitude' },
+          mode: { type: 'string', enum: ['transit', 'driving', 'walking', 'biking'], description: 'User commute preference' },
+        },
+        required: ['neighborhood'],
       },
     },
   },

@@ -2,10 +2,12 @@ import { createSupabaseAdminClient, hasSupabaseCredentials } from "@/lib/supabas
 import { getCoordinateBySlug, getAllCoordinates } from "@/lib/neighborhoodCoordinates";
 
 const CITY_SLUG = "chicago";
-const STREET_VIEW_SIZE = "1280x720";
+const STREET_VIEW_SIZE = "640x640";
 const STREET_VIEW_FOV = 80;
 const STREET_VIEW_HEADING = 0;
 const STREET_VIEW_PITCH = 0;
+const STREET_VIEW_RADIUS = 80;
+const STREET_VIEW_SOURCE = "outdoor";
 
 type CityRow = {
   id: string;
@@ -42,12 +44,37 @@ function buildStreetViewStaticUrl(latitude: number, longitude: number, apiKey: s
   url.searchParams.set("fov", String(STREET_VIEW_FOV));
   url.searchParams.set("heading", String(STREET_VIEW_HEADING));
   url.searchParams.set("pitch", String(STREET_VIEW_PITCH));
+  url.searchParams.set("radius", String(STREET_VIEW_RADIUS));
+  url.searchParams.set("source", STREET_VIEW_SOURCE);
+  url.searchParams.set("return_error_code", "true");
+  url.searchParams.set("key", apiKey);
+  return url.toString();
+}
+
+function buildStreetViewMetadataUrl(latitude: number, longitude: number, apiKey: string) {
+  const url = new URL("https://maps.googleapis.com/maps/api/streetview/metadata");
+  url.searchParams.set("location", `${latitude},${longitude}`);
+  url.searchParams.set("radius", String(STREET_VIEW_RADIUS));
+  url.searchParams.set("source", STREET_VIEW_SOURCE);
   url.searchParams.set("key", apiKey);
   return url.toString();
 }
 
 function hasCoordinate(area: CommunityAreaRow) {
   return Number.isFinite(area.centroid_lat) && Number.isFinite(area.centroid_lng);
+}
+
+async function hasStreetViewPanorama(latitude: number, longitude: number, apiKey: string) {
+  try {
+    const response = await fetch(buildStreetViewMetadataUrl(latitude, longitude, apiKey), {
+      next: { revalidate: 60 * 60 * 24 * 30 },
+    });
+    if (!response.ok) return false;
+    const metadata = (await response.json()) as { status?: string };
+    return metadata.status === "OK";
+  } catch {
+    return false;
+  }
 }
 
 async function getChicagoCityId() {
@@ -75,23 +102,9 @@ export async function getStreetViewImageForCommunityArea(slug = "hyde-park"): Pr
 
     if (areaError || !area) return null;
 
-    const { data: cached } = await supabase
-      .from("street_view_cache")
-      .select("image_url")
-      .eq("city_id", cityId)
-      .eq("community_area_id", area.id)
-      .maybeSingle<StreetViewCacheRow>();
-
-    if (cached?.image_url) {
-      const coord = getCoordinateBySlug(slug);
-      const latitude = area.centroid_lat ?? coord?.lat ?? 0;
-      const longitude = area.centroid_lng ?? coord?.lng ?? 0;
-      return { imageUrl: cached.image_url, latitude, longitude, source: "cache" };
-    }
-
     const coord = getCoordinateBySlug(slug);
-    const latitude = hasCoordinate(area) ? Number(area.centroid_lat) : coord?.lat;
-    const longitude = hasCoordinate(area) ? Number(area.centroid_lng) : coord?.lng;
+    const latitude = coord?.lat ?? (hasCoordinate(area) ? Number(area.centroid_lat) : undefined);
+    const longitude = coord?.lng ?? (hasCoordinate(area) ? Number(area.centroid_lng) : undefined);
     if (
       typeof latitude !== "number" ||
       typeof longitude !== "number" ||
@@ -101,6 +114,19 @@ export async function getStreetViewImageForCommunityArea(slug = "hyde-park"): Pr
       return null;
     }
 
+    const imageUrl = buildStreetViewStaticUrl(latitude, longitude, apiKey);
+
+    const { data: cached } = await supabase
+      .from("street_view_cache")
+      .select("image_url")
+      .eq("city_id", cityId)
+      .eq("community_area_id", area.id)
+      .maybeSingle<StreetViewCacheRow>();
+
+    if (cached?.image_url === imageUrl) {
+      return { imageUrl, latitude, longitude, source: "cache" };
+    }
+
     if (!hasCoordinate(area)) {
       await supabase
         .from("community_areas")
@@ -108,9 +134,10 @@ export async function getStreetViewImageForCommunityArea(slug = "hyde-park"): Pr
         .eq("id", area.id);
     }
 
-    const imageUrl = buildStreetViewStaticUrl(latitude, longitude, apiKey);
+    const hasPanorama = await hasStreetViewPanorama(latitude, longitude, apiKey);
+    if (!hasPanorama) return null;
 
-    const { error: cacheError } = await supabase.from("street_view_cache").insert({
+    const { error: cacheError } = await supabase.from("street_view_cache").upsert({
       city_id: cityId,
       community_area_id: area.id,
       latitude,
@@ -123,7 +150,12 @@ export async function getStreetViewImageForCommunityArea(slug = "hyde-park"): Pr
         source: "google_street_view_static",
         community_area_number: area.community_area_number,
         community_area_name: area.name,
+        radius: STREET_VIEW_RADIUS,
+        source_filter: STREET_VIEW_SOURCE,
+        size: STREET_VIEW_SIZE,
       },
+    }, {
+      onConflict: "city_id,community_area_id",
     });
 
     if (cacheError) return null;
@@ -165,8 +197,8 @@ export async function cacheStreetViewImagesForAllCommunityAreas() {
 
   if (existingError) throw new Error(`Failed to query street view cache: ${existingError.message}`);
 
-  const cachedCommunityAreaIds = new Set(
-    (existingRows ?? []).filter((row) => row.image_url).map((row) => row.community_area_id),
+  const existingUrlByAreaId = new Map(
+    (existingRows ?? []).map((row) => [row.community_area_id, row.image_url]),
   );
 
   let updatedCentroids = 0;
@@ -185,7 +217,8 @@ export async function cacheStreetViewImagesForAllCommunityAreas() {
       updatedCentroids += 1;
     }
 
-    if (cachedCommunityAreaIds.has(area.id)) continue;
+    const imageUrl = buildStreetViewStaticUrl(centroid.lat, centroid.lng, apiKey);
+    if (existingUrlByAreaId.get(area.id) === imageUrl) continue;
 
     rowsToInsert.push({
       city_id: cityId,
@@ -195,11 +228,14 @@ export async function cacheStreetViewImagesForAllCommunityAreas() {
       heading: STREET_VIEW_HEADING,
       pitch: STREET_VIEW_PITCH,
       fov: STREET_VIEW_FOV,
-      image_url: buildStreetViewStaticUrl(centroid.lat, centroid.lng, apiKey),
+      image_url: imageUrl,
       metadata: {
         source: "google_street_view_static",
         community_area_number: centroid.communityAreaNumber,
         community_area_name: centroid.name,
+        radius: STREET_VIEW_RADIUS,
+        source_filter: STREET_VIEW_SOURCE,
+        size: STREET_VIEW_SIZE,
       },
     });
   }
@@ -207,13 +243,13 @@ export async function cacheStreetViewImagesForAllCommunityAreas() {
   if (rowsToInsert.length > 0) {
     const { error } = await supabase
       .from("street_view_cache")
-      .upsert(rowsToInsert, { onConflict: "city_id,community_area_id", ignoreDuplicates: true });
+      .upsert(rowsToInsert, { onConflict: "city_id,community_area_id" });
     if (error) throw new Error(`Failed to cache Street View URLs: ${error.message}`);
   }
 
   return {
     communityAreasInCsv: allCoords.length,
-    cachedBefore: cachedCommunityAreaIds.size,
+    cachedBefore: existingUrlByAreaId.size,
     cachedNow: rowsToInsert.length,
     updatedCentroids,
   };
