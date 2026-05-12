@@ -157,10 +157,16 @@ export function OnboardingProfileForm({ onComplete }: Readonly<Props>) {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(saved));
     } catch { /* storage full or unavailable */ }
     const total = Object.values(priorities).reduce((a, b) => a + b, 0) || 1;
+    const workplaceLocation = resolvedWorkplaceCoords
+      ? {
+          workplaceLat: resolvedWorkplaceCoords.lat,
+          workplaceLng: resolvedWorkplaceCoords.lng,
+        }
+      : {};
     onComplete({
       budgetRange: budgetToRange(budget),
       workplace: workplace.trim() || "not specified",
-      ...(resolvedWorkplaceCoords ?? {}),
+      ...workplaceLocation,
       commutePref,
       priorities: {
         safety: priorities.safety / total,

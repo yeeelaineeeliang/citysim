@@ -1,5 +1,12 @@
 import Groq from "groq-sdk";
 import { querySimulationData } from "@/lib/querySimulationData";
+import {
+  RATE_LIMITS,
+  rateLimitRequest,
+  rejectOversizedRequest,
+  requireApiUser,
+  validateLegacySimulateBody,
+} from "@/lib/apiSecurity";
 
 export const dynamic = "force-dynamic";
 
@@ -15,14 +22,6 @@ type SimulationRequest = {
     priority?: unknown;
   };
 };
-
-function normalizeString(value: unknown, fallback: string) {
-  return typeof value === "string" && value.trim() ? value.trim() : fallback;
-}
-
-function normalizeBudget(value: unknown) {
-  return typeof value === "number" && Number.isFinite(value) ? value : 1400;
-}
 
 function buildSystemPrompt({
   month,
@@ -138,29 +137,43 @@ async function askGroq({
 }
 
 export async function POST(request: Request) {
-  if (!process.env.GROQ_API_KEY || process.env.GROQ_API_KEY === "your_key_here") {
-    return new Response("GROQ_API_KEY is missing. Add it to .env.local before running the simulation.", {
-      status: 500,
-      headers: { "content-type": "text/plain; charset=utf-8" },
-    });
-  }
+  const authResult = await requireApiUser();
+  if (!authResult.ok) return authResult.response;
+
+  const rateLimited = rateLimitRequest(request, authResult.userId, RATE_LIMITS.ai);
+  if (rateLimited) return rateLimited;
+
+  const tooLarge = rejectOversizedRequest(request);
+  if (tooLarge) return tooLarge;
 
   try {
-    const body = (await request.json()) as SimulationRequest;
-    const question = normalizeString(body.question, "");
-
-    if (!question) {
-      return new Response("Question is required.", {
+    let body: SimulationRequest;
+    try {
+      body = (await request.json()) as SimulationRequest;
+    } catch {
+      return new Response("request body must be valid JSON", {
         status: 400,
         headers: { "content-type": "text/plain; charset=utf-8" },
       });
     }
 
-    const month = normalizeString(body.month, "October 2024");
-    const neighborhood = normalizeString(body.neighborhood, "Hyde Park");
-    const workplace = normalizeString(body.persona?.workplace, "UChicago - 5600 S University Ave");
-    const monthlyBudget = normalizeBudget(body.persona?.monthlyBudget);
-    const priority = normalizeString(body.persona?.priority, "transit reliability");
+    const validated = validateLegacySimulateBody(body);
+
+    if (!validated.ok) {
+      return new Response(validated.error, {
+        status: 400,
+        headers: { "content-type": "text/plain; charset=utf-8" },
+      });
+    }
+
+    const { question, month, neighborhood, workplace, monthlyBudget, priority } = validated.value;
+
+    if (!process.env.GROQ_API_KEY || process.env.GROQ_API_KEY === "your_key_here") {
+      return new Response("GROQ_API_KEY is missing. Add it to .env.local before running the simulation.", {
+        status: 500,
+        headers: { "content-type": "text/plain; charset=utf-8" },
+      });
+    }
 
     const simData = await querySimulationData();
     const dataContext = buildDataContext(simData);

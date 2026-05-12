@@ -10,10 +10,17 @@ node_modules
 dist
 .env
 .env.local
+.env.*
+!.env.example
 .vercel
 *.log
 tsconfig.tsbuildinfo
+.DS_Store
 /CityData
 crime_prediction_week7.ipynb
 /reports
 NEWCityLivingSim_ProjectOverview copy.md
+.env*.local
+
+# clerk configuration (can include secrets)
+/.clerk/

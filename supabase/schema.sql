@@ -238,6 +238,9 @@ create index if not exists user_profiles_clerk_user_id_idx
 create index if not exists simulation_sessions_user_profile_idx
   on public.simulation_sessions (user_profile_id, created_at desc);
 
+create index if not exists simulation_sessions_clerk_user_area_year_idx
+  on public.simulation_sessions (clerk_user_id, community_area_id, start_year, status, created_at desc);
+
 create index if not exists conversation_messages_session_created_idx
   on public.conversation_messages (session_id, created_at);
 

@@ -1,4 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
+import {
+  jsonError,
+  RATE_LIMITS,
+  rateLimitRequest,
+  requireApiUser,
+  validateGeocodeQuery,
+} from "@/lib/apiSecurity";
 
 export interface GeocodeSuggestion {
   displayName: string;
@@ -33,8 +40,17 @@ function formatDisplayName(p: PhotonFeature["properties"]): string {
 }
 
 export async function GET(req: NextRequest) {
-  const q = req.nextUrl.searchParams.get("q")?.trim() ?? "";
-  if (q.length < 2) return NextResponse.json({ suggestions: [] });
+  const authResult = await requireApiUser();
+  if (!authResult.ok) return authResult.response;
+
+  const rateLimited = rateLimitRequest(req, authResult.userId, RATE_LIMITS.lookup);
+  if (rateLimited) return rateLimited;
+
+  const validated = validateGeocodeQuery(req.nextUrl.searchParams.get("q"));
+  if (!validated.ok) return jsonError(validated.error, 400);
+  if (!validated.value) return NextResponse.json({ suggestions: [] });
+
+  const q = validated.value;
 
   // Photon: OSM-based autocomplete, much better for POIs than plain Nominatim search
   // Location-biased toward Chicago (lat/lon) — still returns global results beyond the bbox

@@ -1,12 +1,12 @@
 import { NextResponse } from 'next/server'
-import { matchNeighborhoods } from '@/lib/neighborhoodMatch'
+import { runBrief } from '@/lib/chat'
 import {
   jsonError,
   RATE_LIMITS,
   rateLimitRequest,
   rejectOversizedRequest,
   requireApiUser,
-  validateMatchBody,
+  validateBriefBody,
 } from '@/lib/apiSecurity'
 
 export const dynamic = 'force-dynamic'
@@ -16,7 +16,7 @@ export async function POST(request: Request) {
     const authResult = await requireApiUser()
     if (!authResult.ok) return authResult.response
 
-    const rateLimited = rateLimitRequest(request, authResult.userId, RATE_LIMITS.standard)
+    const rateLimited = rateLimitRequest(request, authResult.userId, RATE_LIMITS.ai)
     if (rateLimited) return rateLimited
 
     const tooLarge = rejectOversizedRequest(request)
@@ -28,14 +28,14 @@ export async function POST(request: Request) {
     } catch {
       return jsonError('request body must be valid JSON', 400)
     }
-    const validated = validateMatchBody(rawBody)
+    const validated = validateBriefBody(rawBody)
     if (!validated.ok) return jsonError(validated.error, 400)
 
-    const matches = await matchNeighborhoods(validated.value.profile, validated.value.topN)
+    const result = await runBrief(validated.value)
 
-    return NextResponse.json({ matches })
+    return NextResponse.json(result)
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'Matching failed'
+    const message = error instanceof Error ? error.message : 'Brief generation failed'
     return NextResponse.json({ error: message }, { status: 500 })
   }
 }

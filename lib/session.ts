@@ -7,26 +7,8 @@
  *   conversation_messages — one row per chat turn, linked to session
  */
 
-import { createClient } from '@supabase/supabase-js'
 import { hasSupabaseCredentials, createSupabaseAdminClient } from '@/lib/supabase'
 import type { ChatMessage } from '@/lib/tools/types'
-
-// Session writes use the anon key directly.
-// The service_role key is reserved for data seeding; session tables are open
-// to anon via RLS policies ("anon insert simulation_sessions" etc.).
-function createSessionClient() {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? process.env.SUPABASE_URL ?? ''
-  const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? ''
-  if (!url || !key) throw new Error('Supabase env vars missing')
-  return createClient(url, key, { auth: { autoRefreshToken: false, persistSession: false } })
-}
-
-function hasSessionCredentials() {
-  return Boolean(
-    (process.env.NEXT_PUBLIC_SUPABASE_URL ?? process.env.SUPABASE_URL) &&
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
-  )
-}
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -34,11 +16,12 @@ export interface SessionContext {
   sessionId: string
   cityId: string
   communityAreaId: string
+  clerkUserId: string
 }
 
 // ─── Internal helpers ──────────────────────────────────────────────────────────
 
-async function getChicagoCityId(supabase: ReturnType<typeof createSessionClient>): Promise<string | null> {
+async function getChicagoCityId(supabase: ReturnType<typeof createSupabaseAdminClient>): Promise<string | null> {
   const { data } = await supabase.from('cities').select('id').eq('slug', 'chicago').single()
   return (data as { id: string } | null)?.id ?? null
 }
@@ -67,7 +50,7 @@ async function getCommunityAreaId(
 export async function getOrCreateSession(
   neighborhood: string,
   year = 2024,
-  clerkUserId?: string,
+  clerkUserId: string,
 ): Promise<SessionContext | null> {
   if (!hasSupabaseCredentials()) return null
 
@@ -85,6 +68,7 @@ export async function getOrCreateSession(
       .select('id')
       .eq('city_id', cityId)
       .eq('community_area_id', communityAreaId)
+      .eq('clerk_user_id', clerkUserId)
       .eq('start_year', year)
       .eq('status', 'active')
       .order('created_at', { ascending: false })
@@ -92,7 +76,7 @@ export async function getOrCreateSession(
       .maybeSingle()
 
     if (existing) {
-      return { sessionId: (existing as { id: string }).id, cityId, communityAreaId }
+      return { sessionId: (existing as { id: string }).id, cityId, communityAreaId, clerkUserId }
     }
 
     // Create a new session
@@ -101,7 +85,7 @@ export async function getOrCreateSession(
       .insert({
         city_id: cityId,
         community_area_id: communityAreaId,
-        clerk_user_id: clerkUserId ?? null,
+        clerk_user_id: clerkUserId,
         start_year: year,
         current_month: 1,
         status: 'active',
@@ -111,7 +95,7 @@ export async function getOrCreateSession(
       .single()
 
     if (error || !created) return null
-    return { sessionId: (created as { id: string }).id, cityId, communityAreaId }
+    return { sessionId: (created as { id: string }).id, cityId, communityAreaId, clerkUserId }
   } catch {
     return null
   }
@@ -168,12 +152,23 @@ export async function saveMessages(
  */
 export async function loadSessionHistory(
   sessionId: string,
+  clerkUserId: string,
   limit = 20,
 ): Promise<ChatMessage[]> {
   if (!hasSupabaseCredentials()) return []
 
   try {
     const supabase = createSupabaseAdminClient()
+    const { data: session } = await supabase
+      .from('simulation_sessions')
+      .select('id')
+      .eq('id', sessionId)
+      .eq('clerk_user_id', clerkUserId)
+      .eq('status', 'active')
+      .maybeSingle()
+
+    if (!session) return []
+
     const { data } = await supabase
       .from('conversation_messages')
       .select('role, content, month, year')

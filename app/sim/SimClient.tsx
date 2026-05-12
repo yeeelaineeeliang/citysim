@@ -8,6 +8,7 @@ import dynamic from "next/dynamic";
 import { OnboardingProfileForm } from "./OnboardingProfileForm";
 import { NEIGHBORHOOD_COORDINATES } from "@/lib/neighborhoodCoordinates";
 import type { MapNeighborhood } from "@/components/NeighborhoodMap";
+import { DEMO_PROFILE, DEMO_NEIGHBORHOOD, DEMO_MONTH, DEMO_BRIEF, matchDemoQA } from "@/lib/demoData";
 
 const NeighborhoodMap = dynamic(
   () => import("@/components/NeighborhoodMap").then((m) => m.NeighborhoodMap),
@@ -16,6 +17,10 @@ const NeighborhoodMap = dynamic(
 const SimulationMap = dynamic(
   () => import("@/components/SimulationMap").then((m) => m.SimulationMap),
   { ssr: false, loading: () => <div className="h-full w-full animate-pulse bg-white/20" /> },
+);
+const StreetViewPanorama = dynamic(
+  () => import("@/components/StreetViewPanorama").then((m) => m.StreetViewPanorama),
+  { ssr: false },
 );
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -56,6 +61,32 @@ const SUGGESTED_QUESTIONS = [
 
 const ALL_NEIGHBORHOODS = NEIGHBORHOOD_COORDINATES.map((c) => c.name).sort();
 
+function getProfileWorkplaceCoords(profile: UserProfile | null) {
+  if (!profile) return null;
+
+  const { workplaceLat, workplaceLng } = profile;
+  if (
+    typeof workplaceLat === "number" &&
+    typeof workplaceLng === "number" &&
+    Number.isFinite(workplaceLat) &&
+    Number.isFinite(workplaceLng)
+  ) {
+    return { lat: workplaceLat, lng: workplaceLng };
+  }
+
+  const legacyProfile = profile as UserProfile & { lat?: unknown; lng?: unknown };
+  if (
+    typeof legacyProfile.lat === "number" &&
+    typeof legacyProfile.lng === "number" &&
+    Number.isFinite(legacyProfile.lat) &&
+    Number.isFinite(legacyProfile.lng)
+  ) {
+    return { lat: legacyProfile.lat, lng: legacyProfile.lng };
+  }
+
+  return null;
+}
+
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export function SimClient() {
@@ -77,8 +108,14 @@ export function SimClient() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [lastToolsUsed, setLastToolsUsed] = useState<string[]>([]);
-  const [streetViewUrl, setStreetViewUrl] = useState<string | null>(null);
   const [sceneMode, setSceneMode] = useState<SceneMode>("street");
+  const [briefLoading, setBriefLoading] = useState(false);
+
+  // Demo mode — activated by ?demo=1 in the URL
+  const [isDemoMode] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return new URLSearchParams(window.location.search).get("demo") === "1";
+  });
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -86,25 +123,23 @@ export function SimClient() {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, loading]);
 
+  // Auto-start demo mode on mount
   useEffect(() => {
-    if (step !== "sim") return;
+    if (!isDemoMode) return;
+    handleProfileComplete(DEMO_PROFILE);
+    // pickNeighborhood is called inside handleProfileComplete flow; we do it
+    // manually here because we also need to set the month first.
+    setMonth(DEMO_MONTH);
+    setNeighborhood(DEMO_NEIGHBORHOOD);
+    setMessages([]);
+    setSessionId(null);
+    setSceneMode("street");
+    setStep("sim");
+    setBriefLoading(false);
+    setMessages([{ role: "assistant", content: DEMO_BRIEF }]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isDemoMode]);
 
-    let cancelled = false;
-    setStreetViewUrl(null);
-
-    fetch(`/api/street-view?neighborhood=${encodeURIComponent(neighborhood)}`)
-      .then((res) => res.json() as Promise<{ imageUrl?: string | null }>)
-      .then((data) => {
-        if (!cancelled) setStreetViewUrl(data.imageUrl ?? null);
-      })
-      .catch(() => {
-        if (!cancelled) setStreetViewUrl(null);
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [neighborhood, step]);
 
   // ── Profile complete ────────────────────────────────────────────────────────
 
@@ -114,6 +149,36 @@ export function SimClient() {
     setMatchMode(null);
     setMatches([]);
     setMatchError(null);
+  }
+
+  // ── Proactive monthly brief ─────────────────────────────────────────────────
+
+  async function fetchBrief(targetNeighborhood: string, targetMonth: number, currentProfile: UserProfile) {
+    if (isDemoMode) {
+      // Demo mode: brief is already seeded via the mount effect
+      return;
+    }
+    setBriefLoading(true);
+    try {
+      const res = await fetch("/api/brief", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          neighborhood: targetNeighborhood,
+          month: targetMonth,
+          year: 2024,
+          profile: currentProfile,
+        }),
+      });
+      const data = (await res.json()) as { response?: string; error?: string };
+      if (res.ok && data.response) {
+        setMessages([{ role: "assistant", content: data.response }]);
+      }
+    } catch {
+      // Brief failure is silent — user can still ask questions
+    } finally {
+      setBriefLoading(false);
+    }
   }
 
   // ── Neighborhood matching ───────────────────────────────────────────────────
@@ -144,6 +209,7 @@ export function SimClient() {
     setSessionId(null);
     setSceneMode("street");
     setStep("sim");
+    if (profile) void fetchBrief(name, month, profile);
   }
 
   // ── Chat send ───────────────────────────────────────────────────────────────
@@ -155,6 +221,20 @@ export function SimClient() {
     setInput("");
     setError(null);
     setLastToolsUsed([]);
+
+    // Demo mode: serve pre-canned answer if question matches
+    if (isDemoMode) {
+      const match = matchDemoQA(userMessage, month);
+      if (match) {
+        setMessages((prev) => [
+          ...prev,
+          { role: "user", content: userMessage },
+          { role: "assistant", content: match.answer },
+        ]);
+        setLastToolsUsed(match.toolsUsed);
+        return;
+      }
+    }
 
     const next: ChatMessage[] = [...messages, { role: "user", content: userMessage }];
     setMessages(next);
@@ -336,9 +416,7 @@ export function SimClient() {
                     matchReason: m.matchReason,
                   };
                 });
-                const workplaceCoords = profile?.workplaceLat != null && profile?.workplaceLng != null
-                  ? { lat: profile.workplaceLat, lng: profile.workplaceLng }
-                  : null;
+                const workplaceCoords = getProfileWorkplaceCoords(profile);
                 return (
                   <div className="grid gap-4 lg:grid-cols-[1fr_320px]">
                     {/* Map */}
@@ -405,9 +483,7 @@ export function SimClient() {
 
   const monthName = MONTH_NAMES[month - 1] ?? "this month";
   const sceneCoords = NEIGHBORHOOD_COORDINATES.find((c) => c.name === neighborhood);
-  const workplaceCoords = profile?.workplaceLat != null && profile?.workplaceLng != null
-    ? { lat: profile.workplaceLat, lng: profile.workplaceLng }
-    : null;
+  const workplaceCoords = getProfileWorkplaceCoords(profile);
 
   return (
     <div className="relative h-screen overflow-hidden bg-[#101820] text-white">
@@ -424,6 +500,12 @@ export function SimClient() {
       </div>
 
       <div className="relative z-10 flex h-full flex-col">
+        {isDemoMode && (
+          <div className="flex items-center justify-between gap-2 bg-[#e8b84b] px-4 py-1.5 text-xs font-semibold text-[#182027]">
+            <span>Demo mode — Hyde Park × October 2024</span>
+            <a href="/sim" className="underline opacity-70 hover:opacity-100">Exit demo</a>
+          </div>
+        )}
         <header className="flex flex-col gap-3 border-b border-white/15 bg-black/35 px-4 py-3 shadow-lg backdrop-blur-md sm:flex-row sm:items-center sm:gap-4">
           <div className="flex flex-1 flex-col gap-3 sm:flex-row sm:items-center sm:gap-4">
             <div className="flex shrink-0 items-center gap-2">
@@ -433,10 +515,12 @@ export function SimClient() {
               <select
                 value={neighborhood}
                 onChange={(e) => {
-                  setNeighborhood(e.target.value);
+                  const next = e.target.value;
+                  setNeighborhood(next);
                   setMessages([]);
                   setSessionId(null);
                   setSceneMode("street");
+                  if (profile) void fetchBrief(next, month, profile);
                 }}
                 className="rounded-lg border border-white/20 bg-white/95 px-2 py-1 text-sm text-[color:var(--foreground)] outline-none focus:border-[#e8b84b]"
               >
@@ -486,13 +570,8 @@ export function SimClient() {
                       workplaceCoords={workplaceCoords}
                       workplaceName={profile?.workplace}
                     />
-                  ) : streetViewUrl ? (
-                    <img
-                      src={streetViewUrl}
-                      alt={`${neighborhood} street view`}
-                      className="h-full w-full object-cover"
-                      onError={() => setStreetViewUrl(null)}
-                    />
+                  ) : sceneCoords ? (
+                    <StreetViewPanorama lat={sceneCoords.lat} lng={sceneCoords.lng} month={month} />
                   ) : (
                     <Skybox
                       month={month}
@@ -506,7 +585,7 @@ export function SimClient() {
                   <div className="pointer-events-none absolute inset-x-0 top-0 flex flex-wrap items-start justify-between gap-3 bg-gradient-to-b from-black/60 to-transparent px-4 py-3">
                     <div className="flex flex-wrap items-center gap-2">
                       <p className="text-xs font-semibold uppercase tracking-[0.18em] text-white/75">
-                        {sceneMode === "map" ? "Interactive map" : "Street-level view"}
+                        {sceneMode === "map" ? "Interactive map" : "Street View"}
                       </p>
                       <div className="pointer-events-auto flex rounded-md border border-white/20 bg-black/45 p-0.5 shadow-sm backdrop-blur">
                         {(["street", "map"] as const).map((mode) => (
@@ -521,7 +600,7 @@ export function SimClient() {
                                 : "text-white/75 hover:bg-white/15 hover:text-white"
                             }`}
                           >
-                            {mode === "street" ? "Street" : "Map"}
+                            {mode === "street" ? "Street View" : "Map"}
                           </button>
                         ))}
                       </div>
@@ -538,26 +617,32 @@ export function SimClient() {
 
           <section className="flex min-h-0 flex-col border-t border-white/15 bg-[rgba(255,250,242,0.92)] text-[color:var(--foreground)] shadow-2xl backdrop-blur-md lg:border-l lg:border-t-0">
             <div className="border-b border-[color:var(--panel-border)] px-4 py-3">
-              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[color:var(--muted)]">Conversation</p>
-              <p className="mt-1 text-sm font-medium">{neighborhood}, {monthName} 2024</p>
+              <p className="text-xs font-semibold uppercase tracking-widest text-(--muted)">SAM · {neighborhood} LOCAL</p>
+              <p className="mt-1 text-sm font-medium">{monthName} 2024</p>
             </div>
 
             <div className="min-h-0 flex-1 overflow-y-auto px-4 py-5">
               <div className="mx-auto flex max-w-2xl flex-col gap-4 lg:max-w-none">
                 {messages.length === 0 && !loading && (
                   <div className="rounded-lg border border-[color:var(--panel-border)] bg-white/85 p-4 shadow-sm">
-                    <p className="text-sm font-semibold">Start the month</p>
-                    <div className="mt-4 grid gap-2">
-                      {SUGGESTED_QUESTIONS.map((q) => (
-                        <button
-                          key={q}
-                          onClick={() => void send(q)}
-                          className="rounded-lg border border-[color:var(--panel-border)] bg-white px-3 py-2 text-left text-xs font-medium text-[color:var(--muted)] transition-colors hover:border-[color:var(--accent)] hover:text-[color:var(--accent)]"
-                        >
-                          {q}
-                        </button>
-                      ))}
-                    </div>
+                    {briefLoading ? (
+                      <p className="text-sm text-[color:var(--muted)]">Sam is preparing your monthly overview…</p>
+                    ) : (
+                      <>
+                        <p className="text-sm font-semibold">Start the month</p>
+                        <div className="mt-4 grid gap-2">
+                          {SUGGESTED_QUESTIONS.map((q) => (
+                            <button
+                              key={q}
+                              onClick={() => void send(q)}
+                              className="rounded-lg border border-[color:var(--panel-border)] bg-white px-3 py-2 text-left text-xs font-medium text-[color:var(--muted)] transition-colors hover:border-[color:var(--accent)] hover:text-[color:var(--accent)]"
+                            >
+                              {q}
+                            </button>
+                          ))}
+                        </div>
+                      </>
+                    )}
                   </div>
                 )}
 
@@ -578,7 +663,7 @@ export function SimClient() {
                 {loading && (
                   <div className="flex justify-start">
                     <div className="rounded-lg border border-[color:var(--panel-border)] bg-white/88 px-4 py-3 text-sm text-[color:var(--muted)]">
-                      Querying data...
+                      Sam is thinking...
                     </div>
                   </div>
                 )}

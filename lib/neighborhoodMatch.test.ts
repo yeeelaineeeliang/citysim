@@ -80,7 +80,8 @@ test("ranks transit-focused profiles toward transit-rich neighborhoods", () => {
   const [top] = rankNeighborhoodMatches(profile, neighborhoods);
 
   assert.equal(top.name, "Transit Square");
-  assert.ok(top.descriptors.includes("Transit-rich"));
+  assert.ok(top.descriptors.some((label) => /14 min commute/.test(label)));
+  assert.match(top.matchReason, /14 min commute/i);
   assert.equal("fitScore" in top, false);
 });
 
@@ -100,7 +101,7 @@ test("ranks safety-focused profiles toward lower-crime neighborhoods", () => {
   const [top] = rankNeighborhoodMatches(profile, neighborhoods);
 
   assert.equal(top.name, "Safety Harbor");
-  assert.ok(top.descriptors.includes("Quiet"));
+  assert.ok(top.descriptors.includes("Low crime rate"));
 });
 
 test("ranks affordability-focused profiles toward budget-fit neighborhoods", () => {
@@ -119,7 +120,8 @@ test("ranks affordability-focused profiles toward budget-fit neighborhoods", () 
   const [top] = rankNeighborhoodMatches(profile, neighborhoods);
 
   assert.equal(top.name, "Budget Park");
-  assert.deepEqual(top.descriptors.slice(0, 2), ["Fits budget", "Affordable"]);
+  assert.ok(top.descriptors.some((label) => /fits your budget/i.test(label)));
+  assert.match(top.matchReason, /est\. \$925\/mo/i);
 });
 
 test("returns only the requested number of public match fields", () => {
@@ -142,9 +144,11 @@ test("returns only the requested number of public match fields", () => {
     assert.deepEqual(Object.keys(match).sort(), [
       "communityAreaNumber",
       "descriptors",
+      "matchReason",
       "name",
       "slug",
     ]);
     assert.ok(match.descriptors.length >= 1 && match.descriptors.length <= 3);
+    assert.ok(match.matchReason.length > 0);
   }
 });

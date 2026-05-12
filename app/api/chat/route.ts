@@ -1,53 +1,59 @@
 import { NextResponse } from 'next/server'
 import { runChat } from '@/lib/chat'
 import { getOrCreateSession, saveMessages, loadSessionHistory } from '@/lib/session'
-import type { ChatRequest } from '@/lib/tools/types'
+import {
+  jsonError,
+  RATE_LIMITS,
+  rateLimitRequest,
+  rejectOversizedRequest,
+  requireApiUser,
+  validateChatBody,
+} from '@/lib/apiSecurity'
 
 export const dynamic = 'force-dynamic'
 
-interface ChatBody extends Partial<ChatRequest> {
-  sessionId?: string
-}
-
 export async function POST(request: Request) {
   try {
-    const body = (await request.json()) as ChatBody
+    const authResult = await requireApiUser()
+    if (!authResult.ok) return authResult.response
 
-    if (!body.message || typeof body.message !== 'string' || !body.message.trim()) {
-      return NextResponse.json({ error: 'message is required' }, { status: 400 })
-    }
-    if (!body.neighborhood || typeof body.neighborhood !== 'string') {
-      return NextResponse.json({ error: 'neighborhood is required' }, { status: 400 })
-    }
-    if (typeof body.month !== 'number' || body.month < 1 || body.month > 12) {
-      return NextResponse.json({ error: 'month must be a number 1–12' }, { status: 400 })
-    }
-    if (!body.profile || typeof body.profile !== 'object') {
-      return NextResponse.json({ error: 'profile is required' }, { status: 400 })
-    }
+    const rateLimited = rateLimitRequest(request, authResult.userId, RATE_LIMITS.ai)
+    if (rateLimited) return rateLimited
 
-    const year = body.year ?? 2024
+    const tooLarge = rejectOversizedRequest(request)
+    if (tooLarge) return tooLarge
+
+    let rawBody: unknown
+    try {
+      rawBody = await request.json()
+    } catch {
+      return jsonError('request body must be valid JSON', 400)
+    }
+    const validated = validateChatBody(rawBody)
+    if (!validated.ok) return jsonError(validated.error, 400)
+
+    const { message, neighborhood, month, year, profile } = validated.value
 
     // ── Session continuity ─────────────────────────────────────────────────────
     // Always call getOrCreateSession to ensure cityId + communityAreaId are
     // available so saveMessages can persist every turn (not just the first).
-    const sessionCtx = await getOrCreateSession(body.neighborhood, year)
+    const sessionCtx = await getOrCreateSession(neighborhood, year, authResult.userId)
 
-    let history = body.history ?? []
+    let history = validated.value.history
 
     // Load DB history when the client has no in-memory history — this makes
     // context survive page refreshes and carry across months.
     if (sessionCtx?.sessionId && history.length === 0) {
-      const dbHistory = await loadSessionHistory(sessionCtx.sessionId, 20)
+      const dbHistory = await loadSessionHistory(sessionCtx.sessionId, authResult.userId, 20)
       if (dbHistory.length > 0) history = dbHistory
     }
 
-    const chatReq: ChatRequest = {
-      message:      body.message.trim(),
-      neighborhood: body.neighborhood,
-      month:        body.month,
+    const chatReq = {
+      message,
+      neighborhood,
+      month,
       year,
-      profile:      body.profile,
+      profile,
       history,
     }
 
@@ -57,9 +63,9 @@ export async function POST(request: Request) {
     if (sessionCtx?.sessionId && sessionCtx.cityId && sessionCtx.communityAreaId) {
       void saveMessages(
         sessionCtx,
-        body.month,
+        month,
         year,
-        body.message.trim(),
+        message,
         result.response,
         result.toolsUsed,
       )

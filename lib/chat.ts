@@ -11,6 +11,13 @@ import type {
   UserProfile,
 } from './tools/types'
 
+export interface BriefRequest {
+  neighborhood: string
+  month: number
+  year?: number
+  profile: UserProfile
+}
+
 const MODEL = 'llama-3.3-70b-versatile'
 
 const MONTH_NAMES = [
@@ -78,7 +85,7 @@ function buildNarrationPrompt(profile: UserProfile, neighborhood: string, month:
     .toLowerCase() ?? 'quality of life'
   const lifestyleStr = profile.lifestyle.length > 0 ? profile.lifestyle.join(', ') : 'not specified'
 
-  return `You are CityLiving Sim, a neighborhood advisor. You have just queried real civic data for ${neighborhood} in ${monthName} and have the results in this conversation. Answer the user's question using only that data.
+  return `You are Sam, a long-time resident of ${neighborhood}. You've just pulled up real civic data for the neighborhood in ${monthName} — answer the user's question using only that data.
 
 User profile:
 - Monthly budget: ${profile.budgetRange}
@@ -89,7 +96,8 @@ User profile:
 ${profile.notes ? `- Context: ${profile.notes}` : ''}
 
 Rules:
-- Write in second person: "your commute", "your block", "you'd wait"
+- Speak as a local who knows this neighborhood personally. Use "around here", "on my end of the neighborhood", or "honestly" once per response at most — just enough warmth to feel human, not so much it becomes a character bit.
+- Address the user in second person: "your commute", "your block", "you'd wait"
 - Translate numbers into experience: incidents per month → how safe the walk home feels, rides per day → how crowded the bus feels
 - Never lead with a raw number. Experience first, data as supporting detail
 - Answer from this specific user's perspective — not generically about the neighborhood
@@ -367,6 +375,146 @@ async function runDeterministic(req: ChatRequest, label: string): Promise<ChatRe
   return {
     response: deterministicResponse(neighborhood, month, results, req.profile),
     toolsUsed: toolNames.map((toolName) => `${toolName} (${label})`),
+  }
+}
+
+function selectBriefTools(profile: UserProfile): string[] {
+  const tools: string[] = ['query_crime']
+  const { priorities, commutePref } = profile
+
+  if (priorities.transit >= 3 || commutePref === 'transit') {
+    tools.push('query_commute', 'query_transit')
+  } else if (priorities.affordability >= 3) {
+    tools.push('query_housing')
+  } else if (priorities.entertainment >= 3) {
+    tools.push('query_entertainment')
+  } else {
+    tools.push('query_commute', 'query_transit')
+  }
+
+  return tools
+}
+
+function buildBriefNarrationPrompt(profile: UserProfile, neighborhood: string, month: number): string {
+  const monthName = MONTH_NAMES[month - 1] ?? 'this month'
+  const topPriority = Object.entries(profile.priorities)
+    .sort((a, b) => b[1] - a[1])[0]?.[0]
+    ?.replaceAll(/([A-Z])/g, ' $1')
+    .toLowerCase() ?? 'quality of life'
+  const lifestyleStr = profile.lifestyle.length > 0 ? profile.lifestyle.join(', ') : 'not specified'
+
+  return `You are Sam, a long-time resident of ${neighborhood}. You have just pulled real civic data for ${monthName} and are opening the simulation for the first time — before the user has asked anything.
+
+User profile:
+- Monthly budget: ${profile.budgetRange}
+- Workplace: ${profile.workplace}
+- Commute preference: ${profile.commutePref}
+- Top priority: ${topPriority}
+- Lifestyle: ${lifestyleStr}
+${profile.notes ? `- Context: ${profile.notes}` : ''}
+
+Your job: Write one paragraph (4–5 sentences) that sets the tone for what ${monthName} in ${neighborhood} would feel like for this specific user. This is an unprompted opening — not an answer to a question. Lead with the most important signal for this user's profile. Synthesize 2–3 data signals into a coherent sense of what this month is like, not a list.
+
+Rules:
+- Speak as a local. Use "around here" or "honestly" once at most.
+- Address the user in second person: "your commute", "your block", "you'd wait"
+- Translate numbers into experience. Never lead with a raw number.
+- Never invent data. If a tool returned sparse results, acknowledge that directly.
+- Do not say "Welcome" or introduce yourself. Open mid-thought, as if continuing a conversation.
+- 4–5 sentences max. Prose only. No bullet points.
+
+${CRIME_NARRATIVE_RULES}
+
+${TRANSIT_COMMUTE_NARRATIVE_RULES}
+
+${HOUSING_NARRATIVE_RULES}`.trim()
+}
+
+export async function runBrief(req: BriefRequest): Promise<ChatResponse> {
+  const { neighborhood, month, profile } = req
+  const year = req.year ?? 2024
+  const toolNames = selectBriefTools(profile)
+  const results: ToolResult[] = []
+  const toolsUsed: string[] = []
+
+  for (const toolName of toolNames) {
+    const args = toolArgsFor(toolName, { message: '', neighborhood, month, year, profile })
+    results.push(await executeToolCall(toolName, args))
+    toolsUsed.push(toolName)
+  }
+
+  if (!process.env.GROQ_API_KEY) {
+    return {
+      response: deterministicResponse(neighborhood, month, results, profile),
+      toolsUsed: toolsUsed.map((t) => `${t} (deterministic)`),
+    }
+  }
+
+  const groq = new Groq({ apiKey: process.env.GROQ_API_KEY })
+  const narrationPrompt = buildBriefNarrationPrompt(profile, neighborhood, month)
+
+  const toolResultMessages: Groq.Chat.Completions.ChatCompletionMessageParam[] = results.map(
+    (r, i) => ({
+      role: 'tool' as const,
+      tool_call_id: `brief-tool-${i}`,
+      content: JSON.stringify(r),
+    }),
+  )
+
+  // Fake assistant tool_calls message so tool results are valid in context
+  const fakeToolCallsMsg: Groq.Chat.Completions.ChatCompletionMessageParam = {
+    role: 'assistant',
+    content: null,
+    tool_calls: toolNames.map((name, i) => ({
+      id: `brief-tool-${i}`,
+      type: 'function' as const,
+      function: {
+        name,
+        arguments: JSON.stringify(toolArgsFor(name, { message: '', neighborhood, month, year, profile })),
+      },
+    })),
+  }
+
+  try {
+    const narrateCall = await groq.chat.completions.create({
+      model: MODEL,
+      temperature: 0.3,
+      max_tokens: 300,
+      messages: [
+        { role: 'system', content: narrationPrompt },
+        { role: 'user', content: `Open the ${MONTH_NAMES[month - 1] ?? 'monthly'} simulation for ${neighborhood}.` },
+        fakeToolCallsMsg,
+        ...toolResultMessages,
+      ],
+    })
+
+    const response = narrateCall.choices[0]?.message?.content?.trim()
+    if (!response) throw new Error('Groq returned empty brief')
+
+    const issue = responseIssue(response, results)
+    if (!issue) return { response, toolsUsed }
+
+    const retryCall = await groq.chat.completions.create({
+      model: MODEL,
+      temperature: 0.1,
+      max_tokens: 300,
+      messages: [
+        {
+          role: 'system',
+          content: `${narrationPrompt}\n\nCRITICAL CORRECTION: ${issue} Rewrite so it is grounded, concrete, and within the domain-specific rules.`,
+        },
+        { role: 'user', content: `Open the ${MONTH_NAMES[month - 1] ?? 'monthly'} simulation for ${neighborhood}.` },
+        fakeToolCallsMsg,
+        ...toolResultMessages,
+      ],
+    })
+
+    const retryResponse = retryCall.choices[0]?.message?.content?.trim()
+    if (retryResponse && !responseIssue(retryResponse, results)) return { response: retryResponse, toolsUsed }
+
+    return { response: deterministicResponse(neighborhood, month, results, profile), toolsUsed: toolsUsed.map((t) => `${t} (deterministic fallback)`) }
+  } catch {
+    return { response: deterministicResponse(neighborhood, month, results, profile), toolsUsed: toolsUsed.map((t) => `${t} (deterministic fallback)`) }
   }
 }
 
