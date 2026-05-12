@@ -92,19 +92,18 @@ export function jsonError(error: string, status: number) {
   return NextResponse.json({ error }, { status });
 }
 
-// Auth is optional — signed-in users get session persistence and per-user
-// rate limits; unauthenticated users fall back to IP-based rate limiting.
 export async function requireApiUser(): Promise<AuthValidation> {
   try {
     const { userId } = await auth();
-    return { ok: true, userId: userId ?? 'anon' };
+    return apiAuthResult(userId);
   } catch {
-    return { ok: true, userId: 'anon' };
+    return { ok: false, response: jsonError("Authentication required", 401) };
   }
 }
 
 export function apiAuthResult(userId: string | null | undefined): AuthValidation {
-  return { ok: true, userId: userId ?? 'anon' };
+  if (!userId) return { ok: false, response: jsonError("Authentication required", 401) };
+  return { ok: true, userId };
 }
 
 export function rejectOversizedRequest(request: Request, maxBytes = MAX_BODY_BYTES): NextResponse | null {
@@ -306,6 +305,15 @@ export function validateBriefBody(value: unknown): Validation<{
   if (!profile.ok) return profile;
 
   return { ok: true, value: { neighborhood: neighborhood.value, month: month.value, year: year.value, profile: profile.value } };
+}
+
+export function validateOpeningBody(value: unknown): Validation<{
+  neighborhood: string;
+  month: number;
+  year: number;
+  profile: UserProfile;
+}> {
+  return validateBriefBody(value);
 }
 
 export function validateMatchBody(value: unknown): Validation<{ profile: UserProfile; topN: number }> {

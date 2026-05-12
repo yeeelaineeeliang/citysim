@@ -2,13 +2,21 @@
 
 import { useEffect, useRef, useState } from "react";
 import { AuthActions } from "@/components/AuthActions";
+import { SeasonalStreetOverlay } from "@/components/SeasonalStreetOverlay";
 import { Skybox } from "@/components/Skybox";
-import type { ChatMessage, UserProfile } from "@/lib/tools/types";
+import {
+  groupMessagesByMonth,
+  monthGroupKey,
+  toChatHistory,
+  type SimMessage,
+  type SimMessageKind,
+} from "@/lib/simMessages";
+import type { UserProfile } from "@/lib/tools/types";
 import dynamic from "next/dynamic";
 import { OnboardingProfileForm } from "./OnboardingProfileForm";
 import { NEIGHBORHOOD_COORDINATES } from "@/lib/neighborhoodCoordinates";
 import type { MapNeighborhood } from "@/components/NeighborhoodMap";
-import { DEMO_PROFILE, DEMO_NEIGHBORHOOD, DEMO_MONTH, DEMO_BRIEF, matchDemoQA } from "@/lib/demoData";
+import { DEMO_PROFILE, DEMO_NEIGHBORHOOD, DEMO_MONTH, DEMO_OPENING, matchDemoQA } from "@/lib/demoData";
 
 const NeighborhoodMap = dynamic(
   () => import("@/components/NeighborhoodMap").then((m) => m.NeighborhoodMap),
@@ -50,6 +58,7 @@ const MONTH_NAMES = [
   "July","August","September","October","November","December",
 ];
 const MONTH_SHORT = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+const SIM_YEAR = 2024;
 
 const SUGGESTED_QUESTIONS = [
   "What is crime like here this month?",
@@ -60,6 +69,10 @@ const SUGGESTED_QUESTIONS = [
 ];
 
 const ALL_NEIGHBORHOODS = NEIGHBORHOOD_COORDINATES.map((c) => c.name).sort();
+
+function createSimMessage(role: SimMessage["role"], content: string, month: number, kind: SimMessageKind): SimMessage {
+  return { role, content, month, year: SIM_YEAR, kind };
+}
 
 function getProfileWorkplaceCoords(profile: UserProfile | null) {
   if (!profile) return null;
@@ -87,6 +100,43 @@ function getProfileWorkplaceCoords(profile: UserProfile | null) {
   return null;
 }
 
+function MessageBubble({ message, compact = false }: { message: SimMessage; compact?: boolean }) {
+  const isUser = message.role === "user";
+  const isOpener = message.kind === "opener";
+
+  if (isUser) {
+    return (
+      <div className="flex justify-end">
+        <div className="max-w-[86%] rounded-2xl rounded-br-md bg-[color:var(--accent)] px-4 py-3 text-sm leading-relaxed text-white shadow-sm">
+          {message.content}
+        </div>
+      </div>
+    );
+  }
+
+  if (isOpener && !compact) {
+    return (
+      <div className="rounded-2xl border border-[#dbcbb8] border-l-[#b7793e] bg-[#fffaf2]/95 px-5 py-4 text-[15px] leading-7 text-[#1d252b] shadow-sm">
+        {message.content}
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex justify-start">
+      <div
+        className={`max-w-[92%] rounded-2xl rounded-tl-md px-4 py-3 text-sm leading-relaxed text-[#1d252b] ${
+          compact
+            ? "bg-white/45 text-[#53616b]"
+            : "border border-[#e2d7ca] bg-white/72 shadow-sm"
+        }`}
+      >
+        {message.content}
+      </div>
+    </div>
+  );
+}
+
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export function SimClient() {
@@ -103,13 +153,13 @@ export function SimClient() {
   const [matchError, setMatchError] = useState<string | null>(null);
 
   // Sim step state
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [messages, setMessages] = useState<SimMessage[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [lastToolsUsed, setLastToolsUsed] = useState<string[]>([]);
   const [sceneMode, setSceneMode] = useState<SceneMode>("street");
-  const [briefLoading, setBriefLoading] = useState(false);
+  const [openingThinking, setOpeningThinking] = useState(false);
 
   // Demo mode — activated by ?demo=1 in the URL
   const [isDemoMode] = useState(() => {
@@ -118,26 +168,34 @@ export function SimClient() {
   });
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const messagesRef = useRef<SimMessage[]>([]);
+  const openingRequestRef = useRef(0);
+  const openingAbortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, loading]);
+  }, [messages, loading, openingThinking]);
+
+  useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
+
+  useEffect(() => {
+    return () => openingAbortRef.current?.abort();
+  }, []);
 
   // Auto-start demo mode on mount
   useEffect(() => {
     if (!isDemoMode) return;
-    handleProfileComplete(DEMO_PROFILE);
-    // pickNeighborhood is called inside handleProfileComplete flow; we do it
-    // manually here because we also need to set the month first.
+    setProfile(DEMO_PROFILE);
     setMonth(DEMO_MONTH);
     setNeighborhood(DEMO_NEIGHBORHOOD);
     setMessages([]);
     setSessionId(null);
     setSceneMode("street");
     setStep("sim");
-    setBriefLoading(false);
-    setMessages([{ role: "assistant", content: DEMO_BRIEF }]);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    setOpeningThinking(false);
+    setMessages([createSimMessage("assistant", DEMO_OPENING, DEMO_MONTH, "opener")]);
   }, [isDemoMode]);
 
 
@@ -151,33 +209,88 @@ export function SimClient() {
     setMatchError(null);
   }
 
-  // ── Proactive monthly brief ─────────────────────────────────────────────────
+  // ── Sam monthly opener ──────────────────────────────────────────────────────
 
-  async function fetchBrief(targetNeighborhood: string, targetMonth: number, currentProfile: UserProfile) {
+  function localOpeningFallback(targetNeighborhood: string, targetMonth: number) {
+    const targetMonthName = MONTH_NAMES[targetMonth - 1] ?? "This month";
+    return `${targetMonthName} in ${targetNeighborhood} changes the feel of the streets before you even ask a question. Ask me what you want to understand about being here.`;
+  }
+
+  function insertOpening(content: string, targetMonth: number, insertIndex: number) {
+    setMessages((prev) => {
+      const next = [...prev];
+      next.splice(Math.min(insertIndex, next.length), 0, createSimMessage("assistant", content, targetMonth, "opener"));
+      messagesRef.current = next;
+      return next;
+    });
+  }
+
+  async function fetchOpening(
+    targetNeighborhood: string,
+    targetMonth: number,
+    currentProfile: UserProfile,
+    options: { reset?: boolean } = {},
+  ) {
+    openingAbortRef.current?.abort();
+    const requestId = openingRequestRef.current + 1;
+    openingRequestRef.current = requestId;
+
+    const insertIndex = options.reset ? 0 : messagesRef.current.length;
+    if (options.reset) {
+      messagesRef.current = [];
+      setMessages([]);
+    }
+
+    setError(null);
+    setLastToolsUsed([]);
+    setOpeningThinking(false);
+
     if (isDemoMode) {
-      // Demo mode: brief is already seeded via the mount effect
+      insertOpening(
+        targetMonth === DEMO_MONTH && targetNeighborhood === DEMO_NEIGHBORHOOD
+          ? DEMO_OPENING
+          : localOpeningFallback(targetNeighborhood, targetMonth),
+        targetMonth,
+        insertIndex,
+      );
       return;
     }
-    setBriefLoading(true);
+
+    const controller = new AbortController();
+    openingAbortRef.current = controller;
+    const thinkingTimer = window.setTimeout(() => {
+      if (openingRequestRef.current === requestId) setOpeningThinking(true);
+    }, 2000);
+
     try {
-      const res = await fetch("/api/brief", {
+      const res = await fetch("/api/opening", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        signal: controller.signal,
         body: JSON.stringify({
           neighborhood: targetNeighborhood,
           month: targetMonth,
-          year: 2024,
+          year: SIM_YEAR,
           profile: currentProfile,
         }),
       });
       const data = (await res.json()) as { response?: string; error?: string };
+      if (openingRequestRef.current !== requestId) return;
       if (res.ok && data.response) {
-        setMessages([{ role: "assistant", content: data.response }]);
+        insertOpening(data.response, targetMonth, insertIndex);
+      } else {
+        insertOpening(localOpeningFallback(targetNeighborhood, targetMonth), targetMonth, insertIndex);
       }
-    } catch {
-      // Brief failure is silent — user can still ask questions
+    } catch (err) {
+      if (openingRequestRef.current !== requestId) return;
+      if (err instanceof Error && err.name === "AbortError") return;
+      insertOpening(localOpeningFallback(targetNeighborhood, targetMonth), targetMonth, insertIndex);
     } finally {
-      setBriefLoading(false);
+      window.clearTimeout(thinkingTimer);
+      if (openingRequestRef.current === requestId) {
+        setOpeningThinking(false);
+        openingAbortRef.current = null;
+      }
     }
   }
 
@@ -205,11 +318,24 @@ export function SimClient() {
 
   function pickNeighborhood(name: string) {
     setNeighborhood(name);
-    setMessages([]);
     setSessionId(null);
     setSceneMode("street");
     setStep("sim");
-    if (profile) void fetchBrief(name, month, profile);
+    if (profile) void fetchOpening(name, month, profile, { reset: true });
+  }
+
+  function changeMonth(nextMonth: number) {
+    if (nextMonth === month) return;
+    setMonth(nextMonth);
+    if (profile && step === "sim") void fetchOpening(neighborhood, nextMonth, profile);
+  }
+
+  function changeNeighborhood(nextNeighborhood: string) {
+    if (nextNeighborhood === neighborhood) return;
+    setNeighborhood(nextNeighborhood);
+    setSessionId(null);
+    setSceneMode("street");
+    if (profile) void fetchOpening(nextNeighborhood, month, profile, { reset: true });
   }
 
   // ── Chat send ───────────────────────────────────────────────────────────────
@@ -228,15 +354,15 @@ export function SimClient() {
       if (match) {
         setMessages((prev) => [
           ...prev,
-          { role: "user", content: userMessage },
-          { role: "assistant", content: match.answer },
+          createSimMessage("user", userMessage, month, "user"),
+          createSimMessage("assistant", match.answer, month, "answer"),
         ]);
         setLastToolsUsed(match.toolsUsed);
         return;
       }
     }
 
-    const next: ChatMessage[] = [...messages, { role: "user", content: userMessage }];
+    const next: SimMessage[] = [...messages, createSimMessage("user", userMessage, month, "user")];
     setMessages(next);
     setLoading(true);
 
@@ -248,9 +374,9 @@ export function SimClient() {
           message: userMessage,
           neighborhood,
           month,
-          year: 2024,
+          year: SIM_YEAR,
           profile,
-          history: messages,
+          history: toChatHistory(messages),
           sessionId,
         }),
       });
@@ -259,7 +385,7 @@ export function SimClient() {
       if (!res.ok || data.error) throw new Error(data.error ?? "Agent request failed");
       if (!data.response) throw new Error("Empty response from agent");
 
-      setMessages([...next, { role: "assistant", content: data.response }]);
+      setMessages([...next, createSimMessage("assistant", data.response, month, "answer")]);
       if (data.toolsUsed) setLastToolsUsed(data.toolsUsed);
       if (data.sessionId && !sessionId) setSessionId(data.sessionId);
     } catch (err) {
@@ -268,6 +394,22 @@ export function SimClient() {
     } finally {
       setLoading(false);
     }
+  }
+
+  function renderSuggestedQuestionChips() {
+    return (
+      <div className="flex flex-wrap gap-2">
+        {SUGGESTED_QUESTIONS.map((q) => (
+          <button
+            key={q}
+            onClick={() => void send(q)}
+            className="rounded-full border border-[#d8c9b8] bg-white/65 px-3 py-1.5 text-left text-xs font-medium text-[#53616b] transition-colors hover:border-[color:var(--accent)] hover:bg-white hover:text-[color:var(--accent)]"
+          >
+            {q}
+          </button>
+        ))}
+      </div>
+    );
   }
 
   // ══════════════════════════════════════════════════════════════════════════════
@@ -298,9 +440,6 @@ export function SimClient() {
             <h1 className="mt-6 text-3xl font-semibold text-white">Set up your living profile</h1>
           </header>
           <section className="rounded-2xl border border-[color:var(--panel-border)] bg-[color:var(--panel)] p-6 shadow-[var(--shadow)]">
-            <p className="text-sm text-[color:var(--muted)]">
-              Your answers shape every response — the simulation speaks from your perspective, not generically.
-            </p>
             <OnboardingProfileForm onComplete={handleProfileComplete} />
           </section>
         </div>
@@ -484,6 +623,12 @@ export function SimClient() {
   const monthName = MONTH_NAMES[month - 1] ?? "this month";
   const sceneCoords = NEIGHBORHOOD_COORDINATES.find((c) => c.name === neighborhood);
   const workplaceCoords = getProfileWorkplaceCoords(profile);
+  const messageGroups = groupMessagesByMonth(messages);
+  const currentGroupKey = monthGroupKey(month, SIM_YEAR);
+  const currentGroup = messageGroups.find((group) => group.key === currentGroupKey);
+  const earlierGroups = messageGroups.filter((group) => group.key !== currentGroupKey);
+  const currentMessages = currentGroup?.messages ?? [];
+  const hasCurrentOpener = currentMessages.some((message) => message.kind === "opener");
 
   return (
     <div className="relative h-screen overflow-hidden bg-[#101820] text-white">
@@ -502,11 +647,11 @@ export function SimClient() {
       <div className="relative z-10 flex h-full flex-col">
         {isDemoMode && (
           <div className="flex items-center justify-between gap-2 bg-[#e8b84b] px-4 py-1.5 text-xs font-semibold text-[#182027]">
-            <span>Demo mode — Hyde Park × October 2024</span>
+            <span>Demo mode — Hyde Park × October {SIM_YEAR}</span>
             <a href="/sim" className="underline opacity-70 hover:opacity-100">Exit demo</a>
           </div>
         )}
-        <header className="flex flex-col gap-3 border-b border-white/15 bg-black/35 px-4 py-3 shadow-lg backdrop-blur-md sm:flex-row sm:items-center sm:gap-4">
+        <header className="flex flex-col gap-3 border-b border-white/10 bg-[#26313a]/55 px-4 py-2.5 shadow-lg backdrop-blur-xl sm:flex-row sm:items-center sm:gap-4">
           <div className="flex flex-1 flex-col gap-3 sm:flex-row sm:items-center sm:gap-4">
             <div className="flex shrink-0 items-center gap-2">
               <label className="text-xs font-semibold uppercase tracking-[0.18em] text-white/65">
@@ -516,11 +661,7 @@ export function SimClient() {
                 value={neighborhood}
                 onChange={(e) => {
                   const next = e.target.value;
-                  setNeighborhood(next);
-                  setMessages([]);
-                  setSessionId(null);
-                  setSceneMode("street");
-                  if (profile) void fetchBrief(next, month, profile);
+                  changeNeighborhood(next);
                 }}
                 className="rounded-lg border border-white/20 bg-white/95 px-2 py-1 text-sm text-[color:var(--foreground)] outline-none focus:border-[#e8b84b]"
               >
@@ -534,7 +675,7 @@ export function SimClient() {
               {MONTH_SHORT.map((name, i) => (
                 <button
                   key={name}
-                  onClick={() => setMonth(i + 1)}
+                  onClick={() => changeMonth(i + 1)}
                   className={`shrink-0 rounded px-2 py-1 text-xs font-medium transition-colors ${
                     month === i + 1
                       ? "bg-[#e8b84b] text-[#182027]"
@@ -558,11 +699,10 @@ export function SimClient() {
           </div>
         </header>
 
-        <main className="grid min-h-0 flex-1 grid-rows-[minmax(280px,42vh)_1fr] lg:grid-cols-[minmax(0,1fr)_430px] lg:grid-rows-1">
-          <section className="flex min-h-0 items-center justify-center px-4 py-4 sm:px-6 lg:px-8">
-            <div className="relative flex h-full w-full items-center justify-center">
-              <div className="relative w-full max-w-[640px] overflow-hidden rounded-lg border border-white/20 bg-black/35 shadow-2xl">
-                <div className="relative aspect-square">
+        <main className="grid min-h-0 flex-1 grid-rows-[minmax(360px,56vh)_minmax(0,1fr)] lg:grid-cols-[minmax(0,1fr)_430px] lg:grid-rows-1">
+          <section className="relative min-h-0 overflow-hidden bg-black/20">
+            <div className="relative h-full w-full overflow-hidden bg-black/35 shadow-2xl">
+              <div className="relative h-full min-h-[360px] w-full lg:min-h-0">
                   {sceneMode === "map" && sceneCoords ? (
                     <SimulationMap
                       neighborhoodName={neighborhood}
@@ -582,7 +722,10 @@ export function SimClient() {
                       showElements
                     />
                   )}
-                  <div className="pointer-events-none absolute inset-x-0 top-0 flex flex-wrap items-start justify-between gap-3 bg-gradient-to-b from-black/60 to-transparent px-4 py-3">
+                  {sceneMode === "street" && (
+                    <SeasonalStreetOverlay month={month} monthName={monthName} neighborhood={neighborhood} />
+                  )}
+                  <div className="pointer-events-none absolute inset-x-0 top-0 z-[1000] flex flex-wrap items-start justify-between gap-3 bg-gradient-to-b from-black/60 to-transparent px-4 py-3">
                     <div className="flex flex-wrap items-center gap-2">
                       <p className="text-xs font-semibold uppercase tracking-[0.18em] text-white/75">
                         {sceneMode === "map" ? "Interactive map" : "Street View"}
@@ -605,64 +748,79 @@ export function SimClient() {
                         ))}
                       </div>
                     </div>
-                    <p className="rounded bg-black/42 px-2 py-1 text-xs font-medium text-white">{monthName} 2024</p>
+                    <p className="rounded bg-black/42 px-2 py-1 text-xs font-medium text-white">{monthName} {SIM_YEAR}</p>
                   </div>
-                  <div className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 via-black/40 to-transparent px-4 pb-4 pt-16">
+                  <div className="pointer-events-none absolute inset-x-0 bottom-0 z-[900] bg-gradient-to-t from-black/80 via-black/40 to-transparent px-4 pb-4 pt-16">
                     <p className="text-2xl font-semibold leading-tight text-white">{neighborhood}</p>
                   </div>
-                </div>
               </div>
             </div>
           </section>
 
-          <section className="flex min-h-0 flex-col border-t border-white/15 bg-[rgba(255,250,242,0.92)] text-[color:var(--foreground)] shadow-2xl backdrop-blur-md lg:border-l lg:border-t-0">
-            <div className="border-b border-[color:var(--panel-border)] px-4 py-3">
-              <p className="text-xs font-semibold uppercase tracking-widest text-(--muted)">SAM · {neighborhood} LOCAL</p>
-              <p className="mt-1 text-sm font-medium">{monthName} 2024</p>
+          <section className="flex min-h-0 flex-col border-t border-white/10 bg-[rgba(249,244,236,0.96)] text-[color:var(--foreground)] shadow-2xl backdrop-blur-md lg:border-l lg:border-t-0 lg:border-white/10">
+            <div className="border-b border-[#e1d6c8] px-5 py-4">
+              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[#68747c]">SAM · {neighborhood} LOCAL</p>
+              <p className="mt-1 text-sm font-semibold text-[#1d252b]">{monthName} {SIM_YEAR}</p>
             </div>
 
-            <div className="min-h-0 flex-1 overflow-y-auto px-4 py-5">
-              <div className="mx-auto flex max-w-2xl flex-col gap-4 lg:max-w-none">
-                {messages.length === 0 && !loading && (
-                  <div className="rounded-lg border border-[color:var(--panel-border)] bg-white/85 p-4 shadow-sm">
-                    {briefLoading ? (
-                      <p className="text-sm text-[color:var(--muted)]">Sam is preparing your monthly overview…</p>
-                    ) : (
-                      <>
-                        <p className="text-sm font-semibold">Start the month</p>
-                        <div className="mt-4 grid gap-2">
-                          {SUGGESTED_QUESTIONS.map((q) => (
-                            <button
-                              key={q}
-                              onClick={() => void send(q)}
-                              className="rounded-lg border border-[color:var(--panel-border)] bg-white px-3 py-2 text-left text-xs font-medium text-[color:var(--muted)] transition-colors hover:border-[color:var(--accent)] hover:text-[color:var(--accent)]"
-                            >
-                              {q}
-                            </button>
-                          ))}
+            <div className="min-h-0 flex-1 overflow-y-auto px-5 py-6">
+              <div className="mx-auto flex max-w-2xl flex-col gap-5 lg:max-w-none">
+                {earlierGroups.length > 0 && (
+                  <details className="rounded-2xl border border-[#e2d7ca] bg-white/35 px-4 py-3 text-sm text-[#53616b]">
+                    <summary className="cursor-pointer select-none text-xs font-semibold uppercase tracking-[0.18em] text-[#68747c]">
+                      Earlier months
+                    </summary>
+                    <div className="mt-4 space-y-5">
+                      {earlierGroups.map((group) => (
+                        <div key={group.key} className="space-y-2 border-t border-[#e2d7ca] pt-4 first:border-t-0 first:pt-0">
+                          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[#879099]">
+                            {MONTH_NAMES[group.month - 1]} {group.year}
+                          </p>
+                          <div className="space-y-2 opacity-80">
+                            {group.messages.map((msg, i) => (
+                              <MessageBubble key={`${group.key}-${msg.kind}-${i}`} message={msg} compact />
+                            ))}
+                          </div>
                         </div>
-                      </>
-                    )}
+                      ))}
+                    </div>
+                  </details>
+                )}
+
+                <section className="space-y-4">
+                  <div className="flex items-baseline justify-between gap-3">
+                    <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[#68747c]">Current chapter</p>
+                    <p className="text-xs font-medium text-[#879099]">{monthName} · {neighborhood}</p>
+                  </div>
+
+                  {currentMessages.length === 0 && !loading && !openingThinking && (
+                    <div className="space-y-3 rounded-2xl border border-[#e2d7ca] bg-white/45 px-4 py-4">
+                      <p className="text-sm text-[#53616b]">Sam will open this month here.</p>
+                      {renderSuggestedQuestionChips()}
+                    </div>
+                  )}
+
+                  {currentMessages.map((msg, i) => (
+                    <div key={`${currentGroupKey}-${msg.kind}-${i}`} className="space-y-3">
+                      <MessageBubble message={msg} />
+                      {msg.kind === "opener" && renderSuggestedQuestionChips()}
+                    </div>
+                  ))}
+
+                  {!hasCurrentOpener && currentMessages.length > 0 && renderSuggestedQuestionChips()}
+                </section>
+
+                {openingThinking && (
+                  <div className="flex justify-start">
+                    <div className="rounded-2xl rounded-tl-md border border-[#e2d7ca] bg-white/72 px-4 py-3 text-sm text-[#53616b] shadow-sm">
+                      Sam is thinking...
+                    </div>
                   </div>
                 )}
 
-                {messages.map((msg, i) => (
-                  <div key={i} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
-                    <div
-                      className={`max-w-lg rounded-lg px-4 py-3 text-sm leading-relaxed ${
-                        msg.role === "user"
-                          ? "bg-[color:var(--accent)] text-white"
-                          : "border border-[color:var(--panel-border)] bg-white/88"
-                      }`}
-                    >
-                      {msg.content}
-                    </div>
-                  </div>
-                ))}
-
                 {loading && (
                   <div className="flex justify-start">
-                    <div className="rounded-lg border border-[color:var(--panel-border)] bg-white/88 px-4 py-3 text-sm text-[color:var(--muted)]">
+                    <div className="rounded-2xl rounded-tl-md border border-[#e2d7ca] bg-white/72 px-4 py-3 text-sm text-[#53616b] shadow-sm">
                       Sam is thinking...
                     </div>
                   </div>
@@ -670,7 +828,7 @@ export function SimClient() {
 
                 {error && (
                   <div className="flex justify-start">
-                    <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">
+                    <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">
                       {error}
                     </div>
                   </div>
@@ -686,7 +844,7 @@ export function SimClient() {
               </div>
             </div>
 
-            <footer className="border-t border-[color:var(--panel-border)] bg-white/78 px-4 py-3">
+            <footer className="border-t border-[#e1d6c8] bg-[#fbf6ef]/90 px-5 py-4">
               <form
                 onSubmit={(e) => { e.preventDefault(); void send(input); }}
                 className="mx-auto flex max-w-2xl gap-2 lg:max-w-none"

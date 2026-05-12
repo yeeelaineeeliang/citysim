@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  fallbackNeighborhoodMatches,
   rankNeighborhoodMatches,
   type MatchUserProfile,
   type NeighborhoodData,
@@ -151,4 +152,30 @@ test("returns only the requested number of public match fields", () => {
     assert.ok(match.descriptors.length >= 1 && match.descriptors.length <= 3);
     assert.ok(match.matchReason.length > 0);
   }
+});
+
+test("fallback matching returns deploy-safe neighborhood results without Supabase", () => {
+  const profile: MatchUserProfile = {
+    budgetRange: "$1,000–$1,500",
+    workplace: "University of Chicago",
+    workplaceLat: 41.7886,
+    workplaceLng: -87.5987,
+    commutePref: "transit",
+    priorities: {
+      safety: 0.1,
+      transit: 0.7,
+      affordability: 0.05,
+      cityServices: 0.05,
+      entertainment: 0.1,
+    },
+    lifestyle: ["Short commute"],
+    notes: "",
+  };
+
+  const matches = fallbackNeighborhoodMatches(profile, 5);
+
+  assert.equal(matches.length, 5);
+  assert.equal(matches[0].name, "Hyde Park");
+  assert.ok(matches[0].descriptors.length > 0);
+  assert.match(matches[0].matchReason, /min from University of Chicago/i);
 });

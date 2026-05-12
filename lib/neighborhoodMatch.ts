@@ -6,6 +6,10 @@
  */
 
 import { createSupabaseAdminClient, hasSupabaseCredentials } from "@/lib/supabase";
+import {
+  CHICAGO_COMMUNITY_AREA_PINS,
+  type ChicagoCommunityAreaNumber,
+} from "@/lib/communityAreaPins";
 import { getAllCoordinates } from "@/lib/neighborhoodCoordinates";
 import type { UserProfile } from "@/lib/tools/types";
 
@@ -550,122 +554,177 @@ function toNeighborhoodData(
   });
 }
 
+function descriptorText(area: {
+  name: string;
+  descriptors?: readonly string[];
+}): string {
+  return [area.name, ...(area.descriptors ?? [])].join(" ").toLowerCase();
+}
+
+function fallbackTransitScore(text: string): number {
+  if (/transit-rich|transit hub|downtown|loop/.test(text)) return 0.95;
+  if (/(red|blue|brown|green|pink|orange)\s+line|metra|rail/.test(text)) return 0.82;
+  if (/lakefront|dense|compact|university|campus|corridor/.test(text)) return 0.58;
+  return 0.45;
+}
+
+function fallbackEntertainmentScore(text: string): number {
+  if (/nightlife|entertainment|dining|restaurant|bar|wicker|wrigley|magnificent mile/.test(text)) return 0.85;
+  if (/museum|park|lakefront|riverfront|boulevard|historic|arts|square/.test(text)) return 0.65;
+  return 0.45;
+}
+
+function buildFallbackNeighborhoodData(): NeighborhoodData[] {
+  return getAllCoordinates().map((coordinate) => {
+    const pin = CHICAGO_COMMUNITY_AREA_PINS[coordinate.communityAreaNumber as ChicagoCommunityAreaNumber];
+    const descriptors = [...(pin?.descriptors ?? [])];
+    const text = descriptorText({ name: coordinate.name, descriptors });
+
+    return {
+      communityAreaNumber: coordinate.communityAreaNumber,
+      name: coordinate.name,
+      slug: coordinate.slug,
+      descriptors,
+      scores: {
+        safety: 0.5,
+        transit: fallbackTransitScore(text),
+        affordability: 0.5,
+        cityServices: 0.5,
+        entertainment: fallbackEntertainmentScore(text),
+      },
+    };
+  });
+}
+
+function withWorkplaceCommute(profile: MatchUserProfile, neighborhoods: NeighborhoodData[]): NeighborhoodData[] {
+  const workplaceCoords = resolveWorkplaceCoords(profile);
+  if (!workplaceCoords) return neighborhoods;
+
+  const coordByNumber = new Map(getAllCoordinates().map((c) => [c.communityAreaNumber, c]));
+  return neighborhoods.map((n) => {
+    const coord = coordByNumber.get(n.communityAreaNumber);
+    if (!coord) return n;
+    const miles = distanceMiles(workplaceCoords, { lat: coord.lat, lng: coord.lng });
+    return {
+      ...n,
+      commute: {
+        transitMinutes: Math.round(miles * 8),
+        drivingMinutes: Math.round(miles * 4),
+      },
+    };
+  });
+}
+
+export function fallbackNeighborhoodMatches(
+  profile: MatchUserProfile,
+  topN = 5,
+): NeighborhoodMatch[] {
+  return rankNeighborhoodMatches(profile, withWorkplaceCommute(profile, buildFallbackNeighborhoodData()), topN);
+}
+
 export async function matchNeighborhoods(
   profile: MatchUserProfile,
   topN = 5,
 ): Promise<NeighborhoodMatch[]> {
-  if (!hasSupabaseCredentials()) return [];
+  if (!hasSupabaseCredentials()) return fallbackNeighborhoodMatches(profile, topN);
 
-  const supabase = createSupabaseAdminClient();
+  try {
+    const supabase = createSupabaseAdminClient();
 
-  const { data: city } = await supabase.from("cities").select("id").eq("slug", "chicago").single();
-  if (!city) return [];
-  const cityId = (city as { id: string }).id;
+    const { data: city } = await supabase.from("cities").select("id").eq("slug", "chicago").single();
+    if (!city) return fallbackNeighborhoodMatches(profile, topN);
+    const cityId = (city as { id: string }).id;
 
-  // Single query: areas + their IDs together
-  const { data: areas } = await supabase
-    .from("community_areas")
-    .select("id, community_area_number, name, slug, population, descriptors")
-    .eq("city_id", cityId)
-    .returns<(AreaRow & { id: string })[]>();
-
-  if (!areas?.length) return [];
-
-  const areaIdByNumber = new Map(areas.map((a) => [a.community_area_number, a.id]));
-  const allIds = areas.map((a) => a.id);
-  const year = 2024;
-  const month = 10;
-
-  const [crimeRes, transitRes, serviceRes, entRes, housingRes] = await Promise.all([
-    supabase
-      .from("crime_monthly")
-      .select("community_area_id, incident_count")
+    // Single query: areas + their IDs together
+    const { data: areas } = await supabase
+      .from("community_areas")
+      .select("id, community_area_number, name, slug, population, descriptors")
       .eq("city_id", cityId)
-      .eq("year", year)
-      .eq("month", month)
-      .in("community_area_id", allIds)
-      .returns<CrimeRow[]>(),
-    supabase
-      .from("transit_monthly")
-      .select("community_area_id, bus_ridership, l_ridership")
-      .eq("city_id", cityId)
-      .eq("year", year)
-      .eq("month", month)
-      .in("community_area_id", allIds)
-      .returns<TransitRow[]>(),
-    supabase
-      .from("service_requests_311_monthly")
-      .select("community_area_id, avg_response_days")
-      .eq("city_id", cityId)
-      .eq("year", year)
-      .eq("month", month)
-      .in("community_area_id", allIds)
-      .returns<ServiceRow[]>(),
-    supabase
-      .from("entertainment_metrics")
-      .select("community_area_id, restaurants, bars")
-      .eq("city_id", cityId)
-      .eq("year", year)
-      .in("community_area_id", allIds)
-      .returns<EntRow[]>(),
-    supabase
-      .from("housing_metrics")
-      .select("community_area_id, affordable_units, avg_rent_estimate")
-      .eq("city_id", cityId)
-      .eq("year", year)
-      .in("community_area_id", allIds)
-      .returns<HousingRow[]>(),
-  ]);
+      .returns<(AreaRow & { id: string })[]>();
 
-  const populationById = new Map(areas.map((a) => [a.id, a.population]));
-  const crimeByAreaId = new Map(
-    (crimeRes.data ?? []).map((row) => {
-      const pop = populationById.get(row.community_area_id);
-      const rate = pop && pop > 0 ? (row.incident_count / pop) * 10_000 : row.incident_count;
-      return [row.community_area_id, rate];
-    }),
-  );
-  const transitByAreaId = new Map(
-    (transitRes.data ?? []).map((row) => [row.community_area_id, row.bus_ridership + row.l_ridership]),
-  );
-  const responseDaysByAreaId = new Map((serviceRes.data ?? []).map((row) => [row.community_area_id, row.avg_response_days]));
-  const entertainmentByAreaId = new Map(
-    (entRes.data ?? []).map((row) => [row.community_area_id, row.restaurants + row.bars]),
-  );
-  const rentByAreaId = new Map(
-    (housingRes.data ?? []).map((row) => [row.community_area_id, row.avg_rent_estimate]),
-  );
+    if (!areas?.length) return fallbackNeighborhoodMatches(profile, topN);
 
-  let neighborhoods = toNeighborhoodData(
-    areas,
-    areaIdByNumber,
-    crimeByAreaId,
-    transitByAreaId,
-    responseDaysByAreaId,
-    entertainmentByAreaId,
-    rentByAreaId,
-  );
+    const areaIdByNumber = new Map(areas.map((a) => [a.community_area_number, a.id]));
+    const allIds = areas.map((a) => a.id);
+    const year = 2024;
+    const month = 10;
 
-  // Blend workplace proximity into commute dimension when workplace is recognized.
-  // Uses straight-line distance with Chicago-typical speed proxies:
-  //   transit  ≈ 8 min/mile  (accounts for waiting, transfers, indirect routing)
-  //   driving  ≈ 4 min/mile  (Chicago average ~15 mph in traffic)
-  const workplaceCoords = resolveWorkplaceCoords(profile);
-  if (workplaceCoords) {
-    const coordByNumber = new Map(getAllCoordinates().map((c) => [c.communityAreaNumber, c]));
-    neighborhoods = neighborhoods.map((n) => {
-      const coord = coordByNumber.get(n.communityAreaNumber);
-      if (!coord) return n;
-      const miles = distanceMiles(workplaceCoords, { lat: coord.lat, lng: coord.lng });
-      return {
-        ...n,
-        commute: {
-          transitMinutes: Math.round(miles * 8),
-          drivingMinutes: Math.round(miles * 4),
-        },
-      };
-    });
+    const [crimeRes, transitRes, serviceRes, entRes, housingRes] = await Promise.all([
+      supabase
+        .from("crime_monthly")
+        .select("community_area_id, incident_count")
+        .eq("city_id", cityId)
+        .eq("year", year)
+        .eq("month", month)
+        .in("community_area_id", allIds)
+        .returns<CrimeRow[]>(),
+      supabase
+        .from("transit_monthly")
+        .select("community_area_id, bus_ridership, l_ridership")
+        .eq("city_id", cityId)
+        .eq("year", year)
+        .eq("month", month)
+        .in("community_area_id", allIds)
+        .returns<TransitRow[]>(),
+      supabase
+        .from("service_requests_311_monthly")
+        .select("community_area_id, avg_response_days")
+        .eq("city_id", cityId)
+        .eq("year", year)
+        .eq("month", month)
+        .in("community_area_id", allIds)
+        .returns<ServiceRow[]>(),
+      supabase
+        .from("entertainment_metrics")
+        .select("community_area_id, restaurants, bars")
+        .eq("city_id", cityId)
+        .eq("year", year)
+        .in("community_area_id", allIds)
+        .returns<EntRow[]>(),
+      supabase
+        .from("housing_metrics")
+        .select("community_area_id, affordable_units, avg_rent_estimate")
+        .eq("city_id", cityId)
+        .eq("year", year)
+        .in("community_area_id", allIds)
+        .returns<HousingRow[]>(),
+    ]);
+
+    const populationById = new Map(areas.map((a) => [a.id, a.population]));
+    const crimeByAreaId = new Map(
+      (crimeRes.data ?? []).map((row) => {
+        const pop = populationById.get(row.community_area_id);
+        const rate = pop && pop > 0 ? (row.incident_count / pop) * 10_000 : row.incident_count;
+        return [row.community_area_id, rate];
+      }),
+    );
+    const transitByAreaId = new Map(
+      (transitRes.data ?? []).map((row) => [row.community_area_id, row.bus_ridership + row.l_ridership]),
+    );
+    const responseDaysByAreaId = new Map((serviceRes.data ?? []).map((row) => [row.community_area_id, row.avg_response_days]));
+    const entertainmentByAreaId = new Map(
+      (entRes.data ?? []).map((row) => [row.community_area_id, row.restaurants + row.bars]),
+    );
+    const rentByAreaId = new Map(
+      (housingRes.data ?? []).map((row) => [row.community_area_id, row.avg_rent_estimate]),
+    );
+
+    const neighborhoods = withWorkplaceCommute(
+      profile,
+      toNeighborhoodData(
+        areas,
+        areaIdByNumber,
+        crimeByAreaId,
+        transitByAreaId,
+        responseDaysByAreaId,
+        entertainmentByAreaId,
+        rentByAreaId,
+      ),
+    );
+
+    const matches = rankNeighborhoodMatches(profile, neighborhoods, topN);
+    return matches.length > 0 ? matches : fallbackNeighborhoodMatches(profile, topN);
+  } catch {
+    return fallbackNeighborhoodMatches(profile, topN);
   }
-
-  return rankNeighborhoodMatches(profile, neighborhoods, topN);
 }

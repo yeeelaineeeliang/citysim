@@ -20,6 +20,9 @@ export const DEMO_PROFILE: UserProfile = {
 export const DEMO_NEIGHBORHOOD = 'Hyde Park'
 export const DEMO_MONTH = 10
 
+export const DEMO_OPENING =
+  'October in Hyde Park has that crisp fall feel, with campus foot traffic picking up and the lake getting dramatic. Ask me anything you want to size up here.'
+
 export const DEMO_BRIEF =
   "October in Hyde Park is one of the better months to land here — the crime picture is moderate, running around 88 reported incidents for the month, which works out to roughly 2.8 a day and puts this solidly in the quieter tier for a South Side neighborhood this active. Property crime is the dominant pattern rather than violent incidents, so the risk you'd actually manage day-to-day is keeping your bike locked and being alert around parked cars, not your personal safety on a walk home. Your commute to UChicago is essentially a short hop — the 6 Express runs directly along the corridor, and ridership in October runs moderate, so you'll see some crowding at 8 AM but nothing that makes you wait for a second bus. The lakefront is still in full use this time of year, 53rd Street is at its most walkable before the cold sets in, and the neighborhood genuinely rewards the kind of month where you explore on foot."
 

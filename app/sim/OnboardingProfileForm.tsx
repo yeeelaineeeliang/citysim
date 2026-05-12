@@ -270,9 +270,6 @@ export function OnboardingProfileForm({ onComplete }: Readonly<Props>) {
             </ul>
           )}
         </div>
-        <p className="text-xs font-normal text-[color:var(--muted)]">
-          Select from the list to pin coordinates — or type freely and matching uses your text.
-        </p>
       </div>
 
       {/* Commute preference */}
