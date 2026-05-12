@@ -78,6 +78,58 @@ export interface NeighborhoodProfile {
   area_sq_miles: number
 }
 
+export interface MapPoint {
+  lat: number
+  lng: number
+}
+
+export interface EntertainmentSummaryMapAction {
+  type: 'entertainment_summary'
+  id: string
+  title: string
+  center: MapPoint
+  restaurants: number
+  bars: number
+  parks: string[]
+  farmersMarkets: boolean
+}
+
+export interface CommuteRouteMapAction {
+  type: 'commute_route'
+  id: string
+  title: string
+  originName: string
+  destinationName: string
+  origin: MapPoint
+  destination: MapPoint
+  mode: UserProfile['commutePref']
+  distanceMiles: number | null
+  estimatedMinutes: number | null
+  routeLabel: string | null
+  caveat: string
+}
+
+export interface CrimeAreaSignalMapAction {
+  type: 'crime_area_signal'
+  id: string
+  title: string
+  neighborhood: string
+  center: MapPoint
+  total: number
+  cityAverage: number | null
+  ratio: number | null
+  level: 'below_average' | 'near_average' | 'above_average' | 'unknown'
+  fillColor: string
+  fillOpacity: number
+  label: string
+  boundaryGeojson?: unknown
+}
+
+export type MapAction =
+  | EntertainmentSummaryMapAction
+  | CommuteRouteMapAction
+  | CrimeAreaSignalMapAction
+
 export type ToolResult =
   | CrimeResult
   | TransitResult
@@ -104,4 +156,5 @@ export interface ChatRequest {
 export interface ChatResponse {
   response: string
   toolsUsed: string[]
+  mapActions?: MapAction[]
 }

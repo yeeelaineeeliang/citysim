@@ -1,4 +1,4 @@
-import type { UserProfile } from './tools/types'
+import type { MapAction, UserProfile } from './tools/types'
 
 export const DEMO_PROFILE: UserProfile = {
   budgetRange: '$1,001–$1,500',
@@ -20,6 +20,62 @@ export const DEMO_PROFILE: UserProfile = {
 export const DEMO_NEIGHBORHOOD = 'Hyde Park'
 export const DEMO_MONTH = 10
 
+const HYDE_PARK_POINT = { lat: 41.7943, lng: -87.5918 }
+const UCHICAGO_POINT = { lat: 41.7886, lng: -87.5987 }
+
+function demoEntertainmentAction(month: number): MapAction {
+  return {
+    type: 'entertainment_summary',
+    id: `demo-entertainment-${month}`,
+    title: 'Hyde Park entertainment',
+    center: HYDE_PARK_POINT,
+    restaurants: 94,
+    bars: 12,
+    parks: ['Promontory Point', 'Jackson Park', 'Midway Plaisance'],
+    farmersMarkets: month >= 5 && month <= 10,
+  }
+}
+
+function demoCommuteAction(month: number, estimatedMinutes: number): MapAction {
+  return {
+    type: 'commute_route',
+    id: `demo-commute-${month}`,
+    title: `~${estimatedMinutes} min · 0.5 mi · Route 6`,
+    originName: DEMO_NEIGHBORHOOD,
+    destinationName: DEMO_PROFILE.workplace,
+    origin: HYDE_PARK_POINT,
+    destination: UCHICAGO_POINT,
+    mode: 'transit',
+    distanceMiles: 0.5,
+    estimatedMinutes,
+    routeLabel: 'Route 6',
+    caveat: 'Coarse spatial estimate, not turn-by-turn navigation.',
+  }
+}
+
+function demoCrimeAction(month: number, total: number): MapAction {
+  const cityAverage = 108
+  const ratio = Number((total / cityAverage).toFixed(2))
+  return {
+    type: 'crime_area_signal',
+    id: `demo-crime-${month}`,
+    title: 'Hyde Park crime signal',
+    neighborhood: DEMO_NEIGHBORHOOD,
+    center: HYDE_PARK_POINT,
+    total,
+    cityAverage,
+    ratio,
+    level: ratio <= 0.85 ? 'below_average' : ratio >= 1.15 ? 'above_average' : 'near_average',
+    fillColor: ratio <= 0.85 ? '#64a064' : ratio >= 1.15 ? '#b4503c' : '#c8b478',
+    fillOpacity: ratio >= 1.15 ? 0.18 : 0.15,
+    label: ratio <= 0.85
+      ? 'Below the city average this month.'
+      : ratio >= 1.15
+        ? 'Above the city average this month.'
+        : 'Near the city average this month.',
+  }
+}
+
 export const DEMO_OPENING =
   'October in Hyde Park has that crisp fall feel, with campus foot traffic picking up and the lake getting dramatic. Ask me anything you want to size up here.'
 
@@ -31,6 +87,7 @@ export interface DemoQA {
   keywords: string[]
   answer: string
   toolsUsed: string[]
+  mapActions?: MapAction[]
 }
 
 export const DEMO_QA: DemoQA[] = [
@@ -41,6 +98,7 @@ export const DEMO_QA: DemoQA[] = [
     answer:
       "Your commute from Hyde Park to UChicago in October is about as short as a transit commute in Chicago gets — the 6 Express runs directly along Stony Island, and most of campus is within a mile of the neighborhood core, so the trip rarely tops 15 minutes door to door. Bus ridership on the 6 and 192 combined runs around 18,000 rides in October, which means a crowded bus in the 8–9 AM window but nothing that would make you wait for a second one. The Red Line at 55th–56th–57th is your backup for longer trips and late nights, running moderate service — not the chaos of the North Side, but plan for standing room during the core 30-minute rush. If you're within six blocks of campus your actual best option may be walking, and it's worth mapping your exact block before assuming the bus is even necessary.",
     toolsUsed: ['query_commute', 'query_transit'],
+    mapActions: [demoCommuteAction(10, 8)],
   },
   {
     month: 10,
@@ -48,6 +106,7 @@ export const DEMO_QA: DemoQA[] = [
     answer:
       "Hyde Park in October runs about 88 reported incidents — roughly 2.8 a day — which puts it in the quieter tier for an urban neighborhood this close to downtown. Property crime is the dominant pattern, accounting for around 70% of reports, so the risk you'd actually manage day-to-day is keeping an eye on your bike lock and car, not personal safety on a daylight walk. The area around 53rd Street and the campus core stays well-lit and foot-trafficked well into the evening, which cuts the ambient risk further. Where you'd stay more alert is on blocks further east toward the lake after 10 PM — not alarming by any measure, but the usual city habits apply.",
     toolsUsed: ['query_crime'],
+    mapActions: [demoCrimeAction(10, 88)],
   },
   {
     month: 10,
@@ -55,6 +114,7 @@ export const DEMO_QA: DemoQA[] = [
     answer:
       "Hyde Park has 94 restaurants and 12 bars in the community area, which sounds modest until you realize 53rd Street alone gives you a solid 45-minute walk of options — Medici, Valois, a handful of newer spots. October is the sweet spot for Promontory Point: the lakefront is still fully usable before the November cold cuts it, so Saturday mornings on the Point are genuinely one of the better free activities in Chicago. The Promontory bar hosts solid live music most weekends, and the Logan Center on campus runs free performances through the fall quarter. You won't find the density of a Wicker Park Friday, but this neighborhood rewards the kind of weekend where you walk somewhere rather than plan ahead.",
     toolsUsed: ['query_entertainment'],
+    mapActions: [demoEntertainmentAction(10)],
   },
   {
     month: 10,
@@ -78,6 +138,7 @@ export const DEMO_QA: DemoQA[] = [
     answer:
       "In October you saw about 88 incidents in Hyde Park — November comes in slightly lower, around 82, which is typical as outdoor activity drops and with it the opportunity for property crime on the street. The pattern doesn't shift much: property crime still drives roughly 68% of reports, and the biggest change is fewer bike thefts as cyclists put bikes away for winter. If anything, the narrowing daylight is your biggest behavioral shift — the walk back from the L at 55th after 5 PM is now in the dark, and it's worth knowing which blocks stay well-lit. No meaningful spike in violent crime through November historically; this stays in Hyde Park's quieter tier.",
     toolsUsed: ['query_crime'],
+    mapActions: [demoCrimeAction(11, 82)],
   },
   {
     month: 11,
@@ -85,6 +146,7 @@ export const DEMO_QA: DemoQA[] = [
     answer:
       "Your October commute was largely walkable — November changes that math once the wind picks up off the lake, which it does reliably by mid-month. The 6 and 192 buses become the default even for a 10-minute walk, and ridership ticks up slightly as the neighborhood collectively abandons the outdoor option; expect the 8–9 AM buses to feel a bit more packed than October. The Red Line at 55th–56th–57th stays consistent through November — underground rail doesn't feel the cold the way surface routes do — so it's your more reliable option if the buses are running slow in the cold snap. Hyde Park's lake-adjacent blocks get wind-tunnel effect on east–west streets, so routing through 55th rather than 53rd can shave a minute of wind exposure on your way to the stop.",
     toolsUsed: ['query_commute', 'query_transit'],
+    mapActions: [demoCommuteAction(11, 8)],
   },
   {
     month: 11,
@@ -92,6 +154,7 @@ export const DEMO_QA: DemoQA[] = [
     answer:
       "Outdoor options contract in November but Hyde Park's indoor scene holds up well — the Promontory bar stays strong through the cold, and the Smart Museum and Oriental Institute on campus are genuinely excellent free options on a Sunday afternoon. 53rd Street restaurants see more traffic as people seek warmth, so weekends can have a wait at Medici and Valois by noon. The Hyde Park Art Center runs a fall show through mid-November worth a walk, and the Logan Center calendar stays full through the quarter. The neighborhood's character shifts more campus-oriented in winter — UChicago's schedule fills the week with talks and performances, most of them free and open to neighborhood residents.",
     toolsUsed: ['query_entertainment'],
+    mapActions: [demoEntertainmentAction(11)],
   },
 
   // ── December ───────────────────────────────────────────────────────────────
@@ -101,6 +164,7 @@ export const DEMO_QA: DemoQA[] = [
     answer:
       "December in Hyde Park is quiet in the way that suits it — the campus slows between quarters, the lakefront is almost entirely yours on a weekday, and the 53rd Street strip has a low-key holiday feel without the State Street crowds. Promontory Point in December with no one else on it is one of Chicago's underrated free experiences, if you can handle the cold; the lake view on a clear day is worth the layers. The Museum of Science and Industry runs holiday exhibits that draw families from across the city, bumping foot traffic on the 55th corridor on weekends. Transit holds steady in December — the Red Line doesn't derail in cold the way surface routes can, so your commute access stays consistent even in sub-20 conditions.",
     toolsUsed: ['query_entertainment', 'query_transit'],
+    mapActions: [demoEntertainmentAction(12)],
   },
   {
     month: 12,

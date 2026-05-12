@@ -11,7 +11,7 @@ import {
   type SimMessage,
   type SimMessageKind,
 } from "@/lib/simMessages";
-import type { UserProfile } from "@/lib/tools/types";
+import type { MapAction, UserProfile } from "@/lib/tools/types";
 import dynamic from "next/dynamic";
 import { OnboardingProfileForm } from "./OnboardingProfileForm";
 import { NEIGHBORHOOD_COORDINATES } from "@/lib/neighborhoodCoordinates";
@@ -39,6 +39,7 @@ type SceneMode = "street" | "map";
 interface AgentResponse {
   response?: string;
   toolsUsed?: string[];
+  mapActions?: MapAction[];
   sessionId?: string;
   error?: string;
 }
@@ -158,6 +159,7 @@ export function SimClient() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [lastToolsUsed, setLastToolsUsed] = useState<string[]>([]);
+  const [activeMapActions, setActiveMapActions] = useState<MapAction[]>([]);
   const [sceneMode, setSceneMode] = useState<SceneMode>("street");
   const [openingThinking, setOpeningThinking] = useState(false);
 
@@ -192,6 +194,7 @@ export function SimClient() {
     setNeighborhood(DEMO_NEIGHBORHOOD);
     setMessages([]);
     setSessionId(null);
+    setActiveMapActions([]);
     setSceneMode("street");
     setStep("sim");
     setOpeningThinking(false);
@@ -319,6 +322,7 @@ export function SimClient() {
   function pickNeighborhood(name: string) {
     setNeighborhood(name);
     setSessionId(null);
+    setActiveMapActions([]);
     setSceneMode("street");
     setStep("sim");
     if (profile) void fetchOpening(name, month, profile, { reset: true });
@@ -327,6 +331,7 @@ export function SimClient() {
   function changeMonth(nextMonth: number) {
     if (nextMonth === month) return;
     setMonth(nextMonth);
+    setActiveMapActions([]);
     if (profile && step === "sim") void fetchOpening(neighborhood, nextMonth, profile);
   }
 
@@ -334,6 +339,7 @@ export function SimClient() {
     if (nextNeighborhood === neighborhood) return;
     setNeighborhood(nextNeighborhood);
     setSessionId(null);
+    setActiveMapActions([]);
     setSceneMode("street");
     if (profile) void fetchOpening(nextNeighborhood, month, profile, { reset: true });
   }
@@ -358,6 +364,10 @@ export function SimClient() {
           createSimMessage("assistant", match.answer, month, "answer"),
         ]);
         setLastToolsUsed(match.toolsUsed);
+        if (match.mapActions?.length) {
+          setActiveMapActions(match.mapActions);
+          setSceneMode("map");
+        }
         return;
       }
     }
@@ -387,6 +397,10 @@ export function SimClient() {
 
       setMessages([...next, createSimMessage("assistant", data.response, month, "answer")]);
       if (data.toolsUsed) setLastToolsUsed(data.toolsUsed);
+      if (data.mapActions?.length) {
+        setActiveMapActions(data.mapActions);
+        setSceneMode("map");
+      }
       if (data.sessionId && !sessionId) setSessionId(data.sessionId);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong");
@@ -709,6 +723,7 @@ export function SimClient() {
                       neighborhoodCoords={{ lat: sceneCoords.lat, lng: sceneCoords.lng }}
                       workplaceCoords={workplaceCoords}
                       workplaceName={profile?.workplace}
+                      mapActions={activeMapActions}
                     />
                   ) : sceneCoords ? (
                     <StreetViewPanorama lat={sceneCoords.lat} lng={sceneCoords.lng} month={month} />

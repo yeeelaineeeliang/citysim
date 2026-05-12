@@ -28,6 +28,8 @@ test.after(() => {
 const baseProfile: ChatRequest['profile'] = {
   budgetRange: '$2,000+',
   workplace: 'The University of Chicago',
+  workplaceLat: 41.7886,
+  workplaceLng: -87.5987,
   commutePref: 'transit',
   priorities: {
     safety: 0.2,
@@ -84,6 +86,12 @@ test('answers Oakland to UChicago commute without inventing L-route certainty', 
   assert.match(result.response, /about \d+ minutes/i)
   assert.match(result.response, /does not return an L stop list|not a route plan/i)
   assert.match(result.response, /exact starting block/i)
+  const action = result.mapActions?.find((item) => item.type === 'commute_route')
+  assert.ok(action)
+  if (action.type === 'commute_route') {
+    assert.equal(action.routeLabel, null)
+    assert.equal(action.destinationName, 'The University of Chicago')
+  }
   assertNoInventedRail(result.response)
 })
 
@@ -106,4 +114,36 @@ test('handles transit access with no L stop list as a limitation', async () => {
   assert.match(result.response, /does not return an L stop list/i)
   assert.match(result.response, /access signal, not a route plan/i)
   assertNoInventedRail(result.response)
+})
+
+test('returns an entertainment map action for weekend questions', async () => {
+  const result = await runChat(request({
+    message: 'What can I do on weekends here?',
+    neighborhood: 'Hyde Park',
+  }))
+
+  assert.match(result.toolsUsed.join(','), /query_entertainment/)
+  const action = result.mapActions?.find((item) => item.type === 'entertainment_summary')
+  assert.ok(action)
+  if (action.type === 'entertainment_summary') {
+    assert.equal(action.restaurants, 148)
+    assert.equal(action.bars, 34)
+    assert.deepEqual(action.center, { lat: 41.7943, lng: -87.5918 })
+  }
+})
+
+test('returns an area-level crime map action without incident pins', async () => {
+  const result = await runChat(request({
+    message: 'What is crime like here?',
+    neighborhood: 'Hyde Park',
+  }))
+
+  assert.match(result.toolsUsed.join(','), /query_crime/)
+  const action = result.mapActions?.find((item) => item.type === 'crime_area_signal')
+  assert.ok(action)
+  if (action.type === 'crime_area_signal') {
+    assert.equal(action.total, 97)
+    assert.equal(action.boundaryGeojson, undefined)
+    assert.equal(action.level, 'unknown')
+  }
 })

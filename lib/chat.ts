@@ -1,6 +1,7 @@
 import Groq from 'groq-sdk'
 import { TOOL_DEFINITIONS } from './tools/definitions'
 import { executeToolCall } from './tools/executor'
+import { buildMapActions } from './mapActions'
 import type {
   ChatRequest,
   ChatResponse,
@@ -372,9 +373,12 @@ async function runDeterministic(req: ChatRequest, label: string): Promise<ChatRe
     results.push(await executeToolCall(toolName, toolArgsFor(toolName, { ...req, year })))
   }
 
+  const mapActions = await buildMapActions({ neighborhood, month, year, profile: req.profile }, toolNames, results)
+
   return {
     response: deterministicResponse(neighborhood, month, results, req.profile),
     toolsUsed: toolNames.map((toolName) => `${toolName} (${label})`),
+    mapActions,
   }
 }
 
@@ -596,6 +600,7 @@ export async function runChat(req: ChatRequest): Promise<ChatResponse> {
         content: JSON.stringify(result),
       })
     }
+    const mapActions = await buildMapActions({ neighborhood, month, year, profile }, toolsUsed, rawResults)
 
     // --- Step 3: Narrate from tool results ---
     const narrateCall = await groq.chat.completions.create({
@@ -615,7 +620,7 @@ export async function runChat(req: ChatRequest): Promise<ChatResponse> {
 
     const issue = responseIssue(response, rawResults)
     if (!issue) {
-      return { response, toolsUsed }
+      return { response, toolsUsed, mapActions }
     }
 
     // --- Step 4: Retry with explicit grounding instruction ---
@@ -635,7 +640,7 @@ export async function runChat(req: ChatRequest): Promise<ChatResponse> {
     })
 
     const retryResponse = retryCall.choices[0]?.message?.content?.trim()
-    if (retryResponse && !responseIssue(retryResponse, rawResults)) return { response: retryResponse, toolsUsed }
+    if (retryResponse && !responseIssue(retryResponse, rawResults)) return { response: retryResponse, toolsUsed, mapActions }
 
     throw new Error('Grounding check failed after retry')
   } catch {
