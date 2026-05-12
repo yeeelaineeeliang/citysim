@@ -1,5 +1,7 @@
 # CityLiving Sim
 
+Vercel: https://citysim-gamma.vercel.app/
+
 **Feel a neighborhood before you sign a lease.**
 
 CityLiving Sim helps people choose where to live in Chicago by turning civic data into a practical, personal preview of daily life. Instead of scanning static scores or generic neighborhood blurbs, users enter their budget, workplace, commute preference, and lifestyle priorities, then explore how a neighborhood would actually work for them.
