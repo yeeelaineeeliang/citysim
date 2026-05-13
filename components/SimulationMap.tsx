@@ -1,6 +1,5 @@
 "use client";
 
-import "leaflet/dist/leaflet.css";
 import { Fragment, useEffect } from "react";
 import { Circle, GeoJSON as GeoJSONLayer, MapContainer, Marker, Polyline, Popup, TileLayer, useMap } from "react-leaflet";
 import L from "leaflet";
@@ -31,12 +30,16 @@ function escapeHtml(value: string) {
 function FitBounds({ points }: { points: [number, number][] }) {
   const map = useMap();
   useEffect(() => {
-    if (points.length === 0) return;
-    if (points.length === 1) {
-      map.setView(points[0], 13);
-      return;
-    }
-    map.fitBounds(L.latLngBounds(points), { padding: [56, 56], maxZoom: 13 });
+    const frame = window.requestAnimationFrame(() => {
+      map.invalidateSize();
+      if (points.length === 0) return;
+      if (points.length === 1) {
+        map.setView(points[0], 13);
+        return;
+      }
+      map.fitBounds(L.latLngBounds(points), { padding: [56, 56], maxZoom: 13 });
+    });
+    return () => window.cancelAnimationFrame(frame);
   }, [map, points]);
   return null;
 }
