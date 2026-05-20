@@ -522,6 +522,88 @@ export async function runBrief(req: BriefRequest): Promise<ChatResponse> {
   }
 }
 
+export async function runMonthFull(req: BriefRequest): Promise<ChatResponse> {
+  const { neighborhood, month, profile } = req
+  const year = req.year ?? 2024
+  const toolNames = ['query_crime', 'query_transit', 'query_entertainment', 'query_commute']
+
+  const settled = await Promise.allSettled(
+    toolNames.map((name) =>
+      executeToolCall(name, toolArgsFor(name, { message: '', neighborhood, month, year, profile })),
+    ),
+  )
+
+  const toolsUsed: string[] = []
+  const rawResults: ToolResult[] = []
+  for (const [i, result] of settled.entries()) {
+    if (result.status === 'fulfilled') {
+      toolsUsed.push(toolNames[i]!)
+      rawResults.push(result.value)
+    }
+  }
+
+  const mapActions = await buildMapActions({ neighborhood, month, year, profile }, toolsUsed, rawResults)
+  const monthName = MONTH_NAMES[month - 1] ?? 'this month'
+
+  if (!process.env.GROQ_API_KEY) {
+    return {
+      response: deterministicResponse(neighborhood, month, rawResults, profile),
+      toolsUsed: toolsUsed.map((t) => `${t} (deterministic)`),
+      mapActions,
+    }
+  }
+
+  const groq = new Groq({ apiKey: process.env.GROQ_API_KEY })
+  const narrationPrompt = buildBriefNarrationPrompt(profile, neighborhood, month)
+
+  const fakeToolCallsMsg: Groq.Chat.Completions.ChatCompletionMessageParam = {
+    role: 'assistant',
+    content: null,
+    tool_calls: toolsUsed.map((name, i) => ({
+      id: `month-tool-${i}`,
+      type: 'function' as const,
+      function: {
+        name,
+        arguments: JSON.stringify(toolArgsFor(name, { message: '', neighborhood, month, year, profile })),
+      },
+    })),
+  }
+
+  const toolResultMessages: Groq.Chat.Completions.ChatCompletionMessageParam[] = rawResults.map((r, i) => ({
+    role: 'tool' as const,
+    tool_call_id: `month-tool-${i}`,
+    content: JSON.stringify(r),
+  }))
+
+  try {
+    const call = await groq.chat.completions.create({
+      model: MODEL,
+      temperature: 0.35,
+      max_tokens: 350,
+      messages: [
+        { role: 'system', content: narrationPrompt },
+        {
+          role: 'user',
+          content: `Summarize what ${monthName} is like in ${neighborhood} for this person — cover the feel of the commute, how safe the streets read, and what there is to do here this month.`,
+        },
+        fakeToolCallsMsg,
+        ...toolResultMessages,
+      ],
+    })
+
+    const response = call.choices[0]?.message?.content?.trim()
+    if (response) return { response, toolsUsed, mapActions }
+  } catch {
+    // fall through to deterministic
+  }
+
+  return {
+    response: deterministicResponse(neighborhood, month, rawResults, profile),
+    toolsUsed: toolsUsed.map((t) => `${t} (deterministic fallback)`),
+    mapActions,
+  }
+}
+
 export async function runChat(req: ChatRequest): Promise<ChatResponse> {
   const { message, neighborhood, month, year = 2024, profile, history = [] } = req
   const narrationPrompt = buildNarrationPrompt(profile, neighborhood, month)

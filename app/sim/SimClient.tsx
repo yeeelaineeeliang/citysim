@@ -17,6 +17,7 @@ import { OnboardingProfileForm } from "./OnboardingProfileForm";
 import { NEIGHBORHOOD_COORDINATES } from "@/lib/neighborhoodCoordinates";
 import type { MapNeighborhood } from "@/components/NeighborhoodMap";
 import { DEMO_PROFILE, DEMO_NEIGHBORHOOD, DEMO_MONTH, DEMO_OPENING, matchDemoQA } from "@/lib/demoData";
+import { straightLineCoords } from "@/lib/decodePolyline";
 
 const NeighborhoodMap = dynamic(
   () => import("@/components/NeighborhoodMap").then((m) => m.NeighborhoodMap),
@@ -30,11 +31,20 @@ const StreetViewPanorama = dynamic(
   () => import("@/components/StreetViewPanorama").then((m) => m.StreetViewPanorama),
   { ssr: false },
 );
+const AnimatedSimMap = dynamic(
+  () => import("@/components/AnimatedSimMap").then((m) => m.AnimatedSimMap),
+  { ssr: false, loading: () => <div className="h-full w-full animate-pulse bg-[#1a2530]" /> },
+);
+const DailyLifePanel = dynamic(
+  () => import("@/components/DailyLifePanel").then((m) => m.DailyLifePanel),
+  { ssr: false },
+);
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 type Step = "profile" | "neighborhood" | "sim";
 type SceneMode = "street" | "map";
+type RunState = "idle" | "running" | "paused" | "done";
 
 interface AgentResponse {
   response?: string;
@@ -163,6 +173,15 @@ export function SimClient() {
   const [sceneMode, setSceneMode] = useState<SceneMode>("street");
   const [openingThinking, setOpeningThinking] = useState(false);
 
+  // Auto-run state
+  const [runState, setRunState] = useState<RunState>("idle");
+  const [completedMonths, setCompletedMonths] = useState<number[]>([]);
+  const [autoRunMonth, setAutoRunMonth] = useState<number | null>(null);
+  const [autoRunNarrative, setAutoRunNarrative] = useState<string>("");
+  const [isAnimatingCommute, setIsAnimatingCommute] = useState(false);
+  const [routeCoords, setRouteCoords] = useState<[number, number][]>([]);
+  const runStateRef = useRef<RunState>("idle");
+
   // Demo mode — activated by ?demo=1 in the URL
   const [isDemoMode] = useState(() => {
     if (typeof window === "undefined") return false;
@@ -185,6 +204,89 @@ export function SimClient() {
   useEffect(() => {
     return () => openingAbortRef.current?.abort();
   }, []);
+
+  // Auto-run loop — processes one month whenever runState === 'running' and autoRunMonth is set
+  useEffect(() => {
+    if (runState !== "running" || autoRunMonth === null || !profile) return;
+
+    let cancelled = false;
+
+    async function processMonth() {
+      const m = autoRunMonth!;
+      const currentProfile = profile!;
+      setIsAnimatingCommute(true);
+
+      try {
+        const res = await fetch("/api/sim-month", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            neighborhood,
+            month: m,
+            year: SIM_YEAR,
+            profile: currentProfile,
+          }),
+        });
+        const data = (await res.json()) as {
+          response?: string;
+          toolsUsed?: string[];
+          mapActions?: MapAction[];
+          error?: string;
+        };
+
+        if (cancelled) return;
+
+        if (data.response) {
+          setAutoRunNarrative(data.response);
+          setMessages((prev) => [
+            ...prev,
+            createSimMessage("assistant", data.response!, m, "answer"),
+          ]);
+        }
+
+        if (data.mapActions?.length) {
+          setActiveMapActions(data.mapActions);
+          const commuteAction = data.mapActions.find((a) => a.type === "commute_route");
+          const sceneC = NEIGHBORHOOD_COORDINATES.find((c) => c.name === neighborhood);
+          if (commuteAction && "destination" in commuteAction && sceneC) {
+            const dest = commuteAction.destination as { lat: number; lng: number };
+            setRouteCoords(
+              straightLineCoords({ lat: sceneC.lat, lng: sceneC.lng }, { lat: dest.lat, lng: dest.lng }),
+            );
+          }
+        }
+      } catch {
+        // continue even on API error
+      }
+
+      if (cancelled) return;
+
+      // Animate commute for ~4 seconds
+      await new Promise<void>((resolve) => setTimeout(resolve, 4000));
+      if (cancelled) return;
+
+      setIsAnimatingCommute(false);
+      setCompletedMonths((prev) => [...prev, m]);
+      setMonth(m);
+
+      await new Promise<void>((resolve) => setTimeout(resolve, 600));
+      if (cancelled) return;
+
+      if (runStateRef.current !== "running") return;
+
+      if (m >= 12) {
+        setRunState("done");
+        runStateRef.current = "done";
+        setAutoRunMonth(null);
+      } else {
+        setAutoRunMonth(m + 1);
+      }
+    }
+
+    void processMonth();
+    return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [runState, autoRunMonth]);
 
   // Auto-start demo mode on mount
   useEffect(() => {
@@ -210,6 +312,41 @@ export function SimClient() {
     setMatchMode(null);
     setMatches([]);
     setMatchError(null);
+  }
+
+  // ── Auto-run controls ───────────────────────────────────────────────────────
+
+  function startAutoRun() {
+    if (runState !== "idle" || !profile) return;
+    setRunState("running");
+    runStateRef.current = "running";
+    setCompletedMonths([]);
+    setRouteCoords([]);
+    setAutoRunNarrative("");
+    setSceneMode("map");
+    setAutoRunMonth(month);
+  }
+
+  function togglePause() {
+    if (runState === "running") {
+      setRunState("paused");
+      runStateRef.current = "paused";
+    } else if (runState === "paused") {
+      setRunState("running");
+      runStateRef.current = "running";
+      if (autoRunMonth !== null) {
+        // re-trigger the effect by resetting to the same month
+        setAutoRunMonth((m) => m);
+      }
+    }
+  }
+
+  function stopAutoRun() {
+    setRunState("idle");
+    runStateRef.current = "idle";
+    setAutoRunMonth(null);
+    setIsAnimatingCommute(false);
+    setSceneMode("street");
   }
 
   // ── Sam monthly opener ──────────────────────────────────────────────────────
@@ -686,19 +823,29 @@ export function SimClient() {
             </div>
 
             <div className="flex flex-1 gap-0.5 overflow-x-auto">
-              {MONTH_SHORT.map((name, i) => (
-                <button
-                  key={name}
-                  onClick={() => changeMonth(i + 1)}
-                  className={`shrink-0 rounded px-2 py-1 text-xs font-medium transition-colors ${
-                    month === i + 1
-                      ? "bg-[#e8b84b] text-[#182027]"
-                      : "text-white/65 hover:bg-white/15 hover:text-white"
-                  }`}
-                >
-                  {name}
-                </button>
-              ))}
+              {MONTH_SHORT.map((name, i) => {
+                const m = i + 1;
+                const isCompleted = completedMonths.includes(m);
+                const isCurrent = month === m;
+                const isAutoRunning = autoRunMonth === m && runState === "running";
+                return (
+                  <button
+                    key={name}
+                    onClick={() => changeMonth(m)}
+                    className={`shrink-0 rounded px-2 py-1 text-xs font-medium transition-colors ${
+                      isCompleted
+                        ? "bg-[#2da55e] text-white"
+                        : isAutoRunning
+                          ? "bg-[#3a7bd5] text-white"
+                          : isCurrent
+                            ? "bg-[#e8b84b] text-[#182027]"
+                            : "text-white/65 hover:bg-white/15 hover:text-white"
+                    }`}
+                  >
+                    {isCompleted ? `✓` : name}
+                  </button>
+                );
+              })}
             </div>
           </div>
 
@@ -713,7 +860,42 @@ export function SimClient() {
           </div>
         </header>
 
-        <main className="grid min-h-0 flex-1 grid-rows-[minmax(360px,56vh)_minmax(0,1fr)] lg:grid-cols-[minmax(0,1fr)_430px] lg:grid-rows-1">
+        {/* Full-screen auto-run layout */}
+        {runState !== "idle" && sceneCoords && (
+          <div className="relative min-h-0 flex-1">
+            <AnimatedSimMap
+              homeCoords={{ lat: sceneCoords.lat, lng: sceneCoords.lng }}
+              workplaceCoords={workplaceCoords}
+              routeCoords={routeCoords.length >= 2 ? routeCoords : undefined}
+              workplaceName={profile?.workplace}
+              neighborhoodName={neighborhood}
+              isAnimating={isAnimatingCommute}
+            />
+            {/* Street View inset — top left */}
+            <div className="pointer-events-none absolute left-4 top-4 z-[1050] h-[120px] w-[160px] overflow-hidden rounded-xl border border-white/20 shadow-lg">
+              <StreetViewPanorama lat={sceneCoords.lat} lng={sceneCoords.lng} month={autoRunMonth ?? month} />
+            </div>
+            {/* Stop button — top right */}
+            <div className="absolute right-4 top-4 z-[1050]">
+              <button
+                onClick={stopAutoRun}
+                className="rounded-full border border-white/20 bg-[#1a2530]/80 px-3 py-1.5 text-xs font-semibold text-white/80 shadow backdrop-blur transition hover:bg-[#1a2530] hover:text-white"
+              >
+                ✕ Exit
+              </button>
+            </div>
+            {/* Narrative panel */}
+            <DailyLifePanel
+              monthName={MONTH_NAMES[(autoRunMonth ?? month) - 1] ?? ""}
+              neighborhood={neighborhood}
+              narrative={autoRunNarrative || (runState === "running" ? "Simulating…" : runState === "done" ? "Year complete." : "")}
+              isPaused={runState === "paused"}
+              onPauseToggle={togglePause}
+            />
+          </div>
+        )}
+
+        <main className={`grid min-h-0 flex-1 grid-rows-[minmax(360px,56vh)_minmax(0,1fr)] lg:grid-cols-[minmax(0,1fr)_430px] lg:grid-rows-1 ${runState !== "idle" ? "hidden" : ""}`}>
           <section className="relative min-h-0 overflow-hidden bg-black/20">
             <div className="relative h-full w-full overflow-hidden bg-black/35 shadow-2xl">
               <div className="relative h-full min-h-[360px] w-full lg:min-h-0">
@@ -860,6 +1042,16 @@ export function SimClient() {
             </div>
 
             <footer className="border-t border-[#e1d6c8] bg-[#fbf6ef]/90 px-5 py-4">
+              {runState === "idle" && (
+                <div className="mx-auto mb-3 max-w-2xl lg:max-w-none">
+                  <button
+                    onClick={startAutoRun}
+                    className="w-full rounded-xl border border-[#d4c5b0] bg-gradient-to-r from-[#f5ede0] to-[#fdf7f0] px-4 py-2.5 text-sm font-semibold text-[#8a5a1e] transition hover:border-[color:var(--accent)] hover:from-[#fdf0de] hover:text-[color:var(--accent-strong)]"
+                  >
+                    ▶ Run my life for the next year
+                  </button>
+                </div>
+              )}
               <form
                 onSubmit={(e) => { e.preventDefault(); void send(input); }}
                 className="mx-auto flex max-w-2xl gap-2 lg:max-w-none"
