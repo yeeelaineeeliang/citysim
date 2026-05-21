@@ -29,6 +29,7 @@ export type RateLimitPolicy = {
 
 export const RATE_LIMITS = {
   ai: { name: "ai", max: 12, windowMs: 60_000 },
+  sim: { name: "sim", max: 25, windowMs: 120_000 },
   standard: { name: "standard", max: 40, windowMs: 60_000 },
   lookup: { name: "lookup", max: 80, windowMs: 60_000 },
 } satisfies Record<string, RateLimitPolicy>;

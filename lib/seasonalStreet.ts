@@ -28,9 +28,27 @@ const SEASON_DESCRIPTORS = [
   "Deep winter",
 ] as const;
 
+export type WeatherType = 'snow-heavy' | 'snow-light' | 'rain' | 'sleet' | 'clear' | 'hazy';
+
+const SEASONAL_WEATHER: WeatherType[] = [
+  'snow-heavy', // Jan
+  'snow-heavy', // Feb
+  'sleet',      // Mar
+  'rain',       // Apr
+  'rain',       // May
+  'clear',      // Jun
+  'hazy',       // Jul
+  'hazy',       // Aug
+  'clear',      // Sep
+  'clear',      // Oct
+  'sleet',      // Nov
+  'snow-light', // Dec
+];
+
 export interface SeasonalStreetStyle {
   wash: string;
   descriptor: string;
+  weather: WeatherType;
 }
 
 export function getSeasonalStreetStyle(month: number): SeasonalStreetStyle {
@@ -39,5 +57,6 @@ export function getSeasonalStreetStyle(month: number): SeasonalStreetStyle {
   return {
     wash: SEASONAL_WASHES[index],
     descriptor: SEASON_DESCRIPTORS[index],
+    weather: SEASONAL_WEATHER[index] ?? 'clear',
   };
 }

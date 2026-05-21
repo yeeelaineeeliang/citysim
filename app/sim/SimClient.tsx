@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { AuthActions } from "@/components/AuthActions";
 import { SeasonalStreetOverlay } from "@/components/SeasonalStreetOverlay";
 import { Skybox } from "@/components/Skybox";
+import { WeatherLayer } from "@/components/WeatherLayer";
 import {
   groupMessagesByMonth,
   monthGroupKey,
@@ -27,9 +28,9 @@ const SimulationMap = dynamic(
   () => import("@/components/SimulationMap").then((m) => m.SimulationMap),
   { ssr: false, loading: () => <div className="h-full w-full animate-pulse bg-white/20" /> },
 );
-const StreetViewPanorama = dynamic(
-  () => import("@/components/StreetViewPanorama").then((m) => m.StreetViewPanorama),
-  { ssr: false },
+const MapboxStreetScene = dynamic(
+  () => import("@/components/MapboxStreetScene").then((m) => m.MapboxStreetScene),
+  { ssr: false, loading: () => <div className="h-full w-full animate-pulse bg-[#1a2530]" /> },
 );
 const AnimatedSimMap = dynamic(
   () => import("@/components/AnimatedSimMap").then((m) => m.AnimatedSimMap),
@@ -38,6 +39,10 @@ const AnimatedSimMap = dynamic(
 const DailyLifePanel = dynamic(
   () => import("@/components/DailyLifePanel").then((m) => m.DailyLifePanel),
   { ssr: false },
+);
+const SimAvatarScene = dynamic(
+  () => import("@/components/SimAvatarScene").then((m) => m.SimAvatarScene),
+  { ssr: false, loading: () => <div className="absolute inset-0 bg-[#0d1520]" /> },
 );
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -83,6 +88,14 @@ const ALL_NEIGHBORHOODS = NEIGHBORHOOD_COORDINATES.map((c) => c.name).sort();
 
 function createSimMessage(role: SimMessage["role"], content: string, month: number, kind: SimMessageKind): SimMessage {
   return { role, content, month, year: SIM_YEAR, kind };
+}
+
+function timeProgressToHeading(p: number): number {
+  if (p <= 0.10) return 45   // dawn — NE toward downtown
+  if (p <= 0.40) return 110  // morning — SE residential
+  if (p <= 0.60) return 220  // afternoon — SW commercial strip
+  if (p <= 0.78) return 290  // dusk — W (sunset direction)
+  return 170                  // night — S quieter blocks
 }
 
 function getProfileWorkplaceCoords(profile: UserProfile | null) {
@@ -182,6 +195,9 @@ export function SimClient() {
   const [routeCoords, setRouteCoords] = useState<[number, number][]>([]);
   const runStateRef = useRef<RunState>("idle");
 
+  // Scene time progress — drives weather, lighting, and DailyLifePanel context
+  const [timeProgress, setTimeProgress] = useState(0);
+
   // Demo mode — activated by ?demo=1 in the URL
   const [isDemoMode] = useState(() => {
     if (typeof window === "undefined") return false;
@@ -192,6 +208,11 @@ export function SimClient() {
   const messagesRef = useRef<SimMessage[]>([]);
   const openingRequestRef = useRef(0);
   const openingAbortRef = useRef<AbortController | null>(null);
+
+  // Prefetch refs for N+1 month
+  const prefetchChunksRef = useRef<string[]>([]);
+  const prefetchActionsRef = useRef<MapAction[] | null>(null);
+  const prefetchDoneRef = useRef(false);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -210,62 +231,158 @@ export function SimClient() {
     if (runState !== "running" || autoRunMonth === null || !profile) return;
 
     let cancelled = false;
+    const abortController = new AbortController();
+
+    async function drainSSE(
+      res: Response,
+      m: number,
+      onTools: (actions: MapAction[]) => void,
+      onChunk: (token: string) => void,
+    ): Promise<string> {
+      const reader = res.body!.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let fullText = "";
+      let toolsReceived = false;
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done || cancelled) break;
+        buffer += decoder.decode(value, { stream: true });
+        const parts = buffer.split("\n\n");
+        buffer = parts.pop() ?? "";
+        for (const part of parts) {
+          const line = part.split("\n").find((l) => l.startsWith("data: "));
+          if (!line) continue;
+          try {
+            const evt = JSON.parse(line.slice(6)) as {
+              type: string;
+              mapActions?: MapAction[];
+              toolsUsed?: string[];
+              text?: string;
+            };
+            if (evt.type === "tools" && !toolsReceived) {
+              toolsReceived = true;
+              const actions = evt.mapActions ?? [];
+              if (actions.length) onTools(actions);
+
+              // Kick off prefetch for N+1 as soon as tools phase is done
+              if (m < 12 && !cancelled) {
+                prefetchChunksRef.current = [];
+                prefetchActionsRef.current = null;
+                prefetchDoneRef.current = false;
+                fetch("/api/sim-month", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json", "Accept": "text/event-stream" },
+                  body: JSON.stringify({ neighborhood, month: m + 1, year: SIM_YEAR, profile }),
+                }).then(async (r) => {
+                  if (cancelled || !r.body) return;
+                  const rdr = r.body.getReader();
+                  const dec = new TextDecoder();
+                  let buf = "";
+                  while (true) {
+                    const { done: d, value: v } = await rdr.read();
+                    if (d || cancelled) break;
+                    buf += dec.decode(v, { stream: true });
+                    const ps = buf.split("\n\n"); buf = ps.pop() ?? "";
+                    for (const p of ps) {
+                      const ln = p.split("\n").find((l) => l.startsWith("data: "));
+                      if (!ln) continue;
+                      try {
+                        const e = JSON.parse(ln.slice(6)) as { type: string; mapActions?: MapAction[]; text?: string };
+                        if (e.type === "tools" && e.mapActions) prefetchActionsRef.current = e.mapActions;
+                        if (e.type === "chunk" && e.text) prefetchChunksRef.current.push(e.text);
+                        if (e.type === "done") prefetchDoneRef.current = true;
+                      } catch { /* skip */ }
+                    }
+                  }
+                }).catch(() => { /* silent prefetch failure */ });
+              }
+            }
+            if (evt.type === "chunk" && evt.text) {
+              fullText += evt.text;
+              onChunk(fullText);
+              setTimeProgress(Math.min(1, fullText.length / 380));
+            }
+          } catch { /* skip malformed */ }
+        }
+      }
+      return fullText;
+    }
 
     async function processMonth() {
       const m = autoRunMonth!;
-      const currentProfile = profile!;
-      setIsAnimatingCommute(true);
+      setAutoRunNarrative("");
+      setTimeProgress(0);
+      let fullNarrative = "";
 
-      try {
-        const res = await fetch("/api/sim-month", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            neighborhood,
-            month: m,
-            year: SIM_YEAR,
-            profile: currentProfile,
-          }),
-        });
-        const data = (await res.json()) as {
-          response?: string;
-          toolsUsed?: string[];
-          mapActions?: MapAction[];
-          error?: string;
-        };
+      // Check if we have a usable prefetch from the previous month
+      const hasPrefetch = prefetchChunksRef.current.length > 0;
 
-        if (cancelled) return;
+      if (hasPrefetch) {
+        if (prefetchActionsRef.current?.length) setActiveMapActions(prefetchActionsRef.current);
 
-        if (data.response) {
-          setAutoRunNarrative(data.response);
-          setMessages((prev) => [
-            ...prev,
-            createSimMessage("assistant", data.response!, m, "answer"),
-          ]);
+        // Replay buffered tokens smoothly via rAF
+        let replayText = "";
+        for (const token of prefetchChunksRef.current) {
+          if (cancelled) break;
+          replayText += token;
+          setAutoRunNarrative(replayText);
+          setTimeProgress(Math.min(1, replayText.length / 380));
+          await new Promise((r) => requestAnimationFrame(r));
         }
+        fullNarrative = replayText;
+        prefetchChunksRef.current = [];
+        prefetchActionsRef.current = null;
 
-        if (data.mapActions?.length) {
-          setActiveMapActions(data.mapActions);
-          const commuteAction = data.mapActions.find((a) => a.type === "commute_route");
-          const sceneC = NEIGHBORHOOD_COORDINATES.find((c) => c.name === neighborhood);
-          if (commuteAction && "destination" in commuteAction && sceneC) {
-            const dest = commuteAction.destination as { lat: number; lng: number };
-            setRouteCoords(
-              straightLineCoords({ lat: sceneC.lat, lng: sceneC.lng }, { lat: dest.lat, lng: dest.lng }),
-            );
+        // If prefetch wasn't fully done, continue draining with a new fetch
+        if (!prefetchDoneRef.current && !cancelled) {
+          try {
+            const res = await fetch("/api/sim-month", {
+              method: "POST",
+              signal: abortController.signal,
+              headers: { "Content-Type": "application/json", "Accept": "text/event-stream" },
+              body: JSON.stringify({ neighborhood, month: m, year: SIM_YEAR, profile }),
+            });
+            if (res.headers.get("content-type")?.includes("text/event-stream")) {
+              const extra = await drainSSE(res, m, setActiveMapActions, (text) => setAutoRunNarrative(text));
+              if (extra) fullNarrative = extra;
+            }
+          } catch { /* continue */ }
+        }
+        prefetchDoneRef.current = false;
+      } else {
+        // Normal fetch path
+        try {
+          const res = await fetch("/api/sim-month", {
+            method: "POST",
+            signal: abortController.signal,
+            headers: { "Content-Type": "application/json", "Accept": "text/event-stream" },
+            body: JSON.stringify({ neighborhood, month: m, year: SIM_YEAR, profile }),
+          });
+
+          if (res.headers.get("content-type")?.includes("text/event-stream")) {
+            fullNarrative = await drainSSE(res, m, setActiveMapActions, (text) => setAutoRunNarrative(text));
+          } else {
+            // JSON fallback (old deployment or SSE not supported)
+            const data = (await res.json()) as { response?: string; mapActions?: MapAction[] };
+            fullNarrative = data.response ?? "";
+            setAutoRunNarrative(fullNarrative);
+            if (data.mapActions?.length) setActiveMapActions(data.mapActions);
           }
-        }
-      } catch {
-        // continue even on API error
+        } catch { /* continue even on error */ }
       }
 
       if (cancelled) return;
 
-      // Animate commute for ~4 seconds
-      await new Promise<void>((resolve) => setTimeout(resolve, 4000));
+      if (fullNarrative) {
+        setMessages((prev) => [...prev, createSimMessage("assistant", fullNarrative, m, "answer")]);
+      }
+
+      // 1200ms dwell after narrative completes (narrative itself provides the natural pacing)
+      await new Promise<void>((resolve) => setTimeout(resolve, 1200));
       if (cancelled) return;
 
-      setIsAnimatingCommute(false);
       setCompletedMonths((prev) => [...prev, m]);
       setMonth(m);
 
@@ -284,7 +401,10 @@ export function SimClient() {
     }
 
     void processMonth();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+      abortController.abort();
+    };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [runState, autoRunMonth]);
 
@@ -321,9 +441,10 @@ export function SimClient() {
     setRunState("running");
     runStateRef.current = "running";
     setCompletedMonths([]);
-    setRouteCoords([]);
     setAutoRunNarrative("");
-    setSceneMode("map");
+    prefetchChunksRef.current = [];
+    prefetchActionsRef.current = null;
+    prefetchDoneRef.current = false;
     setAutoRunMonth(month);
   }
 
@@ -860,40 +981,43 @@ export function SimClient() {
           </div>
         </header>
 
-        {/* Full-screen auto-run layout */}
-        {runState !== "idle" && sceneCoords && (
-          <div className="relative min-h-0 flex-1">
-            <AnimatedSimMap
-              homeCoords={{ lat: sceneCoords.lat, lng: sceneCoords.lng }}
-              workplaceCoords={workplaceCoords}
-              routeCoords={routeCoords.length >= 2 ? routeCoords : undefined}
-              workplaceName={profile?.workplace}
-              neighborhoodName={neighborhood}
-              isAnimating={isAnimatingCommute}
-            />
-            {/* Street View inset — top left */}
-            <div className="pointer-events-none absolute left-4 top-4 z-[1050] h-[120px] w-[160px] overflow-hidden rounded-xl border border-white/20 shadow-lg">
-              <StreetViewPanorama lat={sceneCoords.lat} lng={sceneCoords.lng} month={autoRunMonth ?? month} />
+        {/* Full-screen auto-run layout — 3D city-builder view */}
+        {runState !== "idle" && sceneCoords && (() => {
+          const sceneMonth = autoRunMonth ?? month;
+          return (
+            <div data-testid="sim-avatar-scene" className="relative min-h-0 flex-1 overflow-hidden">
+              {/* Layer 1: Leaflet avatar scene — dark map, animated avatar, mini-map HUD */}
+              <SimAvatarScene
+                lat={sceneCoords.lat}
+                lng={sceneCoords.lng}
+                workplaceCoords={workplaceCoords}
+                routeCoords={routeCoords}
+                isAnimating={runState === "running"}
+                month={sceneMonth}
+              />
+              {/* Layer 2: CSS weather particles — works over any background */}
+              <WeatherLayer month={sceneMonth} />
+              {/* Exit button */}
+              <div className="absolute right-4 top-4 z-[1050]">
+                <button
+                  onClick={stopAutoRun}
+                  className="rounded-full border border-white/20 bg-[#1a2530]/80 px-3 py-1.5 text-xs font-semibold text-white/80 shadow backdrop-blur transition hover:bg-[#1a2530] hover:text-white"
+                >
+                  ✕ Exit
+                </button>
+              </div>
+              {/* Narrative panel */}
+              <DailyLifePanel
+                monthName={MONTH_NAMES[sceneMonth - 1] ?? ""}
+                neighborhood={neighborhood}
+                narrative={autoRunNarrative || (runState === "running" ? "Looking around…" : runState === "done" ? "Year complete." : "")}
+                isPaused={runState === "paused"}
+                onPauseToggle={togglePause}
+                timeProgress={timeProgress}
+              />
             </div>
-            {/* Stop button — top right */}
-            <div className="absolute right-4 top-4 z-[1050]">
-              <button
-                onClick={stopAutoRun}
-                className="rounded-full border border-white/20 bg-[#1a2530]/80 px-3 py-1.5 text-xs font-semibold text-white/80 shadow backdrop-blur transition hover:bg-[#1a2530] hover:text-white"
-              >
-                ✕ Exit
-              </button>
-            </div>
-            {/* Narrative panel */}
-            <DailyLifePanel
-              monthName={MONTH_NAMES[(autoRunMonth ?? month) - 1] ?? ""}
-              neighborhood={neighborhood}
-              narrative={autoRunNarrative || (runState === "running" ? "Simulating…" : runState === "done" ? "Year complete." : "")}
-              isPaused={runState === "paused"}
-              onPauseToggle={togglePause}
-            />
-          </div>
-        )}
+          );
+        })()}
 
         <main className={`grid min-h-0 flex-1 grid-rows-[minmax(360px,56vh)_minmax(0,1fr)] lg:grid-cols-[minmax(0,1fr)_430px] lg:grid-rows-1 ${runState !== "idle" ? "hidden" : ""}`}>
           <section className="relative min-h-0 overflow-hidden bg-black/20">
@@ -907,8 +1031,8 @@ export function SimClient() {
                       workplaceName={profile?.workplace}
                       mapActions={activeMapActions}
                     />
-                  ) : sceneCoords ? (
-                    <StreetViewPanorama lat={sceneCoords.lat} lng={sceneCoords.lng} month={month} />
+                  ) : sceneCoords && runState === "idle" ? (
+                    <MapboxStreetScene lat={sceneCoords.lat} lng={sceneCoords.lng} month={month} />
                   ) : (
                     <Skybox
                       month={month}
@@ -921,6 +1045,31 @@ export function SimClient() {
                   )}
                   {sceneMode === "street" && (
                     <SeasonalStreetOverlay month={month} monthName={monthName} neighborhood={neighborhood} />
+                  )}
+                  {/* Hero CTA — overlaid on scene when simulation hasn't started */}
+                  {runState === "idle" && (
+                    <div className="absolute inset-0 z-[800] flex flex-col items-center justify-center px-6">
+                      <div className="w-full max-w-sm rounded-2xl border border-white/20 bg-black/55 px-6 py-7 text-center shadow-2xl backdrop-blur-md">
+                        <p className="mb-2 text-xs font-semibold uppercase tracking-[0.22em] text-white/60">
+                          {neighborhood} · {monthName}
+                        </p>
+                        <h2 className="mb-1 text-2xl font-bold leading-tight text-white">
+                          Simulate your year
+                        </h2>
+                        <p className="mb-5 text-sm leading-relaxed text-white/65">
+                          A month-by-month story of your life here — commute, weather, city rhythms.
+                        </p>
+                        <button
+                          onClick={startAutoRun}
+                          className="w-full rounded-full bg-[color:var(--accent)] py-3 text-sm font-bold text-white shadow-lg transition hover:bg-[color:var(--accent-strong)] active:scale-[0.97]"
+                        >
+                          ▶ Run my year in {neighborhood}
+                        </button>
+                        <p className="mt-4 text-xs text-white/45">
+                          Or ask Sam a question in the chat →
+                        </p>
+                      </div>
+                    </div>
                   )}
                   <div className="pointer-events-none absolute inset-x-0 top-0 z-[1000] flex flex-wrap items-start justify-between gap-3 bg-gradient-to-b from-black/60 to-transparent px-4 py-3">
                     <div className="flex flex-wrap items-center gap-2">
@@ -1046,9 +1195,9 @@ export function SimClient() {
                 <div className="mx-auto mb-3 max-w-2xl lg:max-w-none">
                   <button
                     onClick={startAutoRun}
-                    className="w-full rounded-xl border border-[#d4c5b0] bg-gradient-to-r from-[#f5ede0] to-[#fdf7f0] px-4 py-2.5 text-sm font-semibold text-[#8a5a1e] transition hover:border-[color:var(--accent)] hover:from-[#fdf0de] hover:text-[color:var(--accent-strong)]"
+                    className="w-full rounded-xl bg-[color:var(--accent)] px-4 py-3 text-sm font-bold text-white transition hover:bg-[color:var(--accent-strong)]"
                   >
-                    ▶ Run my life for the next year
+                    ▶ Run my year in {neighborhood}
                   </button>
                 </div>
               )}
