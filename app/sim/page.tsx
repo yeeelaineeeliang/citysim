@@ -12,5 +12,5 @@ export default async function SimPage({
     await auth.protect();
   }
 
-  return <SimClient />;
+  return <SimClient demoMode={demo === "1"} />;
 }
