@@ -14,12 +14,23 @@ interface Props {
   readonly lat: number
   readonly lng: number
   readonly month: number
+  readonly targetHeading?: number
+  readonly enableDrift?: boolean
 }
 
-export function StreetViewPanorama({ lat, lng, month }: Props) {
+export function StreetViewPanorama({ lat, lng, month, targetHeading = 0, enableDrift = false }: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
+  const panoramaRef = useRef<google.maps.StreetViewPanorama | null>(null)
+  const headingRef = useRef(0)
+  const targetHeadingRef = useRef(targetHeading)
+  const driftTimeRef = useRef(0)
   const [ready, setReady] = useState(false)
   const [noImagery, setNoImagery] = useState(false)
+
+  // Keep targetHeadingRef in sync without restarting the heading interval
+  useEffect(() => {
+    targetHeadingRef.current = targetHeading
+  }, [targetHeading])
 
   useEffect(() => {
     if (!containerRef.current) return
@@ -27,6 +38,8 @@ export function StreetViewPanorama({ lat, lng, month }: Props) {
     let cancelled = false
     setReady(false)
     setNoImagery(false)
+    panoramaRef.current = null
+    headingRef.current = 0
 
     importLibrary("streetView")
       .then((lib) => {
@@ -48,7 +61,7 @@ export function StreetViewPanorama({ lat, lng, month }: Props) {
             container.innerHTML = ""
             const pano = new Panorama(container, {
               position: data.location.latLng,
-              pov: { heading: 0, pitch: 0 },
+              pov: { heading: 0, pitch: -3 },
               zoom: 1,
               addressControl: false,
               fullscreenControl: false,
@@ -60,6 +73,7 @@ export function StreetViewPanorama({ lat, lng, month }: Props) {
               linksControl: true,
               clickToGo: true,
             })
+            panoramaRef.current = pano
             setReady(pano.getVisible() !== false)
           },
         )
@@ -70,8 +84,35 @@ export function StreetViewPanorama({ lat, lng, month }: Props) {
 
     return () => {
       cancelled = true
+      panoramaRef.current = null
     }
   }, [lat, lng])
+
+  // Heading drift + smooth interpolation toward targetHeading — opt-in only
+  useEffect(() => {
+    if (!ready || !enableDrift) return
+
+    const interval = setInterval(() => {
+      const pano = panoramaRef.current
+      if (!pano) return
+
+      const target = targetHeadingRef.current
+      let delta = target - headingRef.current
+      // Normalize to [-180, 180] so we always rotate the short way
+      while (delta > 180) delta -= 360
+      while (delta < -180) delta += 360
+
+      headingRef.current += delta * 0.06
+
+      // Slow sine-wave drift: ±12° over ~7 minutes — imperceptible as oscillation
+      driftTimeRef.current += 0.003
+      const drift = Math.sin(driftTimeRef.current) * 12
+
+      pano.setPov({ heading: headingRef.current + drift, pitch: -3 })
+    }, 200)
+
+    return () => clearInterval(interval)
+  }, [ready, enableDrift])
 
   return (
     <div className="relative h-full w-full">

@@ -13,10 +13,10 @@ interface SimulationMapProps {
   mapActions?: MapAction[];
 }
 
-const ACCENT = "#c0553b";
-const WORKPLACE = "#dc2626";
-const ENTERTAINMENT = "#b7793e";
-const ROUTE = "#2563eb";
+const ACCENT = "#6f8d5f";
+const WORKPLACE = "#c76545";
+const ENTERTAINMENT = "#5f8d55";
+const ROUTE = "#6f8d5f";
 
 function escapeHtml(value: string) {
   return value
@@ -60,9 +60,9 @@ function neighborhoodIcon(name: string) {
       "></div>
       <div style="
         border:1px solid rgba(22,33,40,0.16);
-        border-radius:6px;background:rgba(255,250,242,0.97);
-        color:#162128;padding:5px 8px;
-        font:800 13px/1.1 system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+        border-radius:999px;background:rgba(255,249,238,0.97);
+        color:#263126;padding:5px 9px;
+        font:800 13px/1.1 'Avenir Next','Segoe UI Rounded',system-ui,sans-serif;
       ">${escapeHtml(name)}</div>
     </div>`,
     iconSize: [220, 28],
@@ -82,13 +82,13 @@ function workplaceIcon() {
       <div style="
         width:16px;height:16px;border-radius:999px;
         background:${WORKPLACE};border:3px solid white;
-        box-shadow:0 0 0 2px rgba(220,38,38,0.34);
+        box-shadow:0 0 0 2px rgba(199,101,69,0.34);
       "></div>
       <div style="
-        border:1px solid rgba(220,38,38,0.28);
-        border-radius:6px;background:rgba(255,255,255,0.97);
-        color:#7f1d1d;padding:5px 8px;
-        font:800 12px/1.1 system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+        border:1px solid rgba(199,101,69,0.28);
+        border-radius:999px;background:rgba(255,249,238,0.97);
+        color:#263126;padding:5px 9px;
+        font:800 12px/1.1 'Avenir Next','Segoe UI Rounded',system-ui,sans-serif;
       ">Workplace</div>
     </div>`,
     iconSize: [130, 28],
@@ -113,9 +113,9 @@ function entertainmentIcon(action: Extract<MapAction, { type: "entertainment_sum
       ">${action.restaurants}/${action.bars}</div>
       <div style="
         border:1px solid rgba(183,121,62,0.28);
-        border-radius:6px;background:rgba(255,250,242,0.98);
+        border-radius:999px;background:rgba(255,249,238,0.98);
         color:#4b2a14;padding:5px 8px;
-        font:800 12px/1.1 system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+        font:800 12px/1.1 'Avenir Next','Segoe UI Rounded',system-ui,sans-serif;
       ">Food + bars</div>
     </div>`,
     iconSize: [170, 32],
@@ -129,12 +129,12 @@ function routeLabelIcon(title: string) {
     html: `<div style="
       transform:translate(-50%,-50%);
       white-space:nowrap;
-      border:1px solid rgba(37,99,235,0.24);
+      border:1px solid rgba(111,141,95,0.28);
       border-radius:999px;
       background:rgba(255,255,255,0.96);
-      color:#1e3a8a;
+      color:#4f6f45;
       padding:6px 10px;
-      font:800 12px/1 system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+      font:800 12px/1 'Avenir Next','Segoe UI Rounded',system-ui,sans-serif;
       box-shadow:0 3px 10px rgba(0,0,0,0.22);
     ">${escapeHtml(title)}</div>`,
     iconSize: [220, 28],

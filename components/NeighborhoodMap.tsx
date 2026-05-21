@@ -20,8 +20,8 @@ interface Props {
   onSelect: (name: string) => void;
 }
 
-const ACCENT = "#c0553b";
-const WORKPLACE = "#dc2626";
+const ACCENT = "#6f8d5f";
+const WORKPLACE = "#c76545";
 
 function escapeHtml(value: string) {
   return value
@@ -64,9 +64,9 @@ function neighborhoodIcon(neighborhood: MapNeighborhood) {
       ">${neighborhood.rank}</div>
       <div style="
         border:1px solid rgba(22,33,40,0.16);
-        border-radius:6px;background:rgba(255,250,242,0.96);
-        color:#162128;padding:4px 7px;
-        font:700 12px/1.15 system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+        border-radius:999px;background:rgba(255,249,238,0.96);
+        color:#263126;padding:4px 8px;
+        font:700 12px/1.15 'Avenir Next','Segoe UI Rounded',system-ui,sans-serif;
       ">${escapeHtml(neighborhood.name)}</div>
     </div>`,
     iconSize: [210, 30],
@@ -87,13 +87,13 @@ function workplaceIcon() {
       <div style="
         width:16px;height:16px;border-radius:999px;
         background:${WORKPLACE};border:3px solid white;
-        box-shadow:0 0 0 2px rgba(220,38,38,0.32);
+        box-shadow:0 0 0 2px rgba(199,101,69,0.32);
       "></div>
       <div style="
-        border:1px solid rgba(220,38,38,0.28);
-        border-radius:6px;background:rgba(255,255,255,0.96);
-        color:#7f1d1d;padding:4px 7px;
-        font:700 12px/1.15 system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+        border:1px solid rgba(199,101,69,0.28);
+        border-radius:999px;background:rgba(255,249,238,0.96);
+        color:#263126;padding:4px 8px;
+        font:700 12px/1.15 'Avenir Next','Segoe UI Rounded',system-ui,sans-serif;
       ">Workplace</div>
     </div>`,
     iconSize: [120, 26],
@@ -111,7 +111,7 @@ export function NeighborhoodMap({ neighborhoods, workplaceCoords, workplaceName,
     <MapContainer
       center={[41.878, -87.629]}
       zoom={11}
-      className="h-full w-full rounded-2xl"
+      className="h-full w-full rounded-[var(--radius-lg)]"
       zoomControl={true}
     >
       <TileLayer
@@ -144,9 +144,9 @@ export function NeighborhoodMap({ neighborhoods, workplaceCoords, workplaceName,
               <p className="mt-0.5 text-xs text-gray-500">{n.matchReason}</p>
               <button
                 onClick={() => onSelect(n.name)}
-                className="mt-2 w-full rounded-full bg-[#c0553b] px-3 py-1 text-xs font-semibold text-white"
+                className="mt-2 w-full rounded-[var(--radius-sm)] bg-[color:var(--sage)] px-3 py-1.5 text-xs font-bold text-white"
               >
-                Simulate this neighborhood →
+                Simulate this neighborhood
               </button>
             </div>
           </Popup>
