@@ -1,4 +1,5 @@
 import { getCoordinateByName } from '@/lib/neighborhoodCoordinates'
+import { fetchOSRMRoute } from '@/lib/fetchRoute'
 import type { CommuteResult, UserProfile } from './types'
 
 const KNOWN_WORKPLACES: Record<string, { lat: number; lng: number }> = {
@@ -63,13 +64,13 @@ function estimateMinutes(distance: number) {
   }
 }
 
-export function queryCommute(
+export async function queryCommute(
   neighborhood: string,
   workplace: string,
   mode: UserProfile['commutePref'] = 'transit',
   workplaceLat?: number,
   workplaceLng?: number,
-): CommuteResult {
+): Promise<CommuteResult> {
   const origin = getCoordinateByName(neighborhood)
   const destination = resolveWorkplace(workplace, workplaceLat, workplaceLng)
 
@@ -91,18 +92,39 @@ export function queryCommute(
     }
   }
 
-  const distance = Number(distanceMiles({ lat: origin.lat, lng: origin.lng }, destination).toFixed(1))
-  const estimates = estimateMinutes(distance)
+  const dist = Number(distanceMiles({ lat: origin.lat, lng: origin.lng }, destination).toFixed(1))
+  const haversine = estimateMinutes(dist)
+
+  // Fetch real road-network durations for driving/walking/biking in parallel
+  const [drivingRes, walkingRes, bikingRes] = await Promise.all([
+    fetchOSRMRoute(origin, destination, 'driving'),
+    fetchOSRMRoute(origin, destination, 'foot'),
+    fetchOSRMRoute(origin, destination, 'bike'),
+  ])
+
+  const osrmMinutes = (res: typeof drivingRes): number | null =>
+    res.durationSeconds !== null ? Math.max(1, Math.round(res.durationSeconds / 60)) : null
+
+  const estimates = {
+    transit_minutes: haversine.transit_minutes,
+    driving_minutes: osrmMinutes(drivingRes) ?? haversine.driving_minutes,
+    walking_minutes: osrmMinutes(walkingRes) ?? haversine.walking_minutes,
+    biking_minutes:  osrmMinutes(bikingRes)  ?? haversine.biking_minutes,
+  }
+
+  const hasRealData = drivingRes.durationSeconds !== null || walkingRes.durationSeconds !== null
   const key = `${mode}_minutes` as keyof CommuteResult['estimates']
 
   return {
     origin_neighborhood: neighborhood,
     destination: workplace || 'not specified',
     mode,
-    distance_miles: distance,
+    distance_miles: dist,
     estimated_minutes: estimates[key],
     estimates,
-    confidence: 'medium',
-    note: 'Coarse estimate from community-area coordinate to workplace coordinate. This is not a CTA route plan and does not identify exact stops, transfers, or door-to-door timing.',
+    confidence: hasRealData ? 'medium' : 'low',
+    note: hasRealData
+      ? 'Road-network times from OSRM routing (driving, walking, biking). Transit is a distance-based estimate — not a CTA route plan.'
+      : 'Coarse estimate from community-area coordinate to workplace. This is not a CTA route plan.',
   }
 }

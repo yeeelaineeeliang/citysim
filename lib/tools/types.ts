@@ -1,5 +1,6 @@
 export interface UserProfile {
   budgetRange: string
+  monthlyBudget?: number
   workplace: string
   workplaceLat?: number
   workplaceLng?: number

@@ -1,6 +1,12 @@
 import { thinPolyline } from './decodePolyline'
 
-type OSRMMode = 'foot' | 'driving' | 'bike'
+export type OSRMMode = 'foot' | 'driving' | 'bike'
+
+export interface OSRMRouteResult {
+  coords: [number, number][] | null
+  durationSeconds: number | null
+  distanceMeters: number | null
+}
 
 export function commuteMode(pref: string): OSRMMode {
   if (pref === 'driving') return 'driving'
@@ -12,7 +18,8 @@ export async function fetchOSRMRoute(
   from: { lat: number; lng: number },
   to: { lat: number; lng: number },
   mode: OSRMMode = 'foot',
-): Promise<[number, number][] | null> {
+): Promise<OSRMRouteResult> {
+  const empty: OSRMRouteResult = { coords: null, durationSeconds: null, distanceMeters: null }
   try {
     const url =
       `https://router.project-osrm.org/route/v1/${mode}/` +
@@ -20,21 +27,30 @@ export async function fetchOSRMRoute(
       `?overview=full&geometries=geojson`
 
     const res = await fetch(url, { signal: AbortSignal.timeout(6000) })
-    if (!res.ok) return null
+    if (!res.ok) return empty
 
     const data = (await res.json()) as {
       code: string
-      routes?: Array<{ geometry: { coordinates: [number, number][] } }>
+      routes?: Array<{
+        geometry: { coordinates: [number, number][] }
+        duration: number
+        distance: number
+      }>
     }
 
-    if (data.code !== 'Ok' || !data.routes?.[0]) return null
+    if (data.code !== 'Ok' || !data.routes?.[0]) return empty
 
+    const route = data.routes[0]
     // OSRM returns [lng, lat] — flip to [lat, lng] for Leaflet
-    const coords: [number, number][] = data.routes[0].geometry.coordinates.map(
+    const coords: [number, number][] = route.geometry.coordinates.map(
       ([lng, lat]) => [lat, lng],
     )
-    return thinPolyline(coords, 30)
+    return {
+      coords: thinPolyline(coords, 30),
+      durationSeconds: route.duration,
+      distanceMeters: route.distance,
+    }
   } catch {
-    return null
+    return empty
   }
 }

@@ -53,17 +53,26 @@ async function fromSupabase(neighborhood: string, month: number): Promise<Servic
   }
 }
 
+const NO_DATA: ServiceResult = {
+  total_requests: 0,
+  by_type: {},
+  avg_response_days: 0,
+}
+
 export async function query311(neighborhood: string, month: number): Promise<ServiceResult> {
+  const key = neighborhood.toLowerCase().trim()
+
   if (hasSupabaseCredentials()) {
     try {
       const result = await fromSupabase(neighborhood, month)
       if (result) return result
+      // Supabase responded but no data — signal no data for non-demo neighborhoods
+      if (key !== 'hyde park') return NO_DATA
     } catch {
-      // fall through to stub
+      // Network/DB failure — fall through to stub
     }
   }
 
-  const key = neighborhood.toLowerCase().trim()
   if (key === 'hyde park') return HYDE_PARK_2024[month] ?? DEFAULT
   return { ...DEFAULT, avg_response_days: 5.5 }
 }

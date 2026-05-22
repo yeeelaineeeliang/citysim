@@ -18,6 +18,7 @@ export interface BriefRequest {
   month: number
   year?: number
   profile: UserProfile
+  prevMonthSummaries?: string[]
 }
 
 const MODEL = 'llama-3.3-70b-versatile'
@@ -149,13 +150,13 @@ function isCommuteResult(result: ToolResult): result is CommuteResult {
 }
 
 function describeBudgetFit(profile: UserProfile | undefined, rentEstimate: number): string {
-  const budget = profile ? parseBudgetAmount(profile.budgetRange) : null
+  const budget = typeof profile?.monthlyBudget === "number" ? profile.monthlyBudget : profile ? parseBudgetAmount(profile.budgetRange) : null
   if (!budget) {
     return `The loaded rent estimate is ${formatMoney(rentEstimate)}/month, but your profile does not give a precise budget ceiling to compare against`
   }
 
   const gap = budget - rentEstimate
-  const budgetLabel = profile?.budgetRange ?? formatMoney(budget)
+  const budgetLabel = typeof profile?.monthlyBudget === "number" ? formatMoney(profile.monthlyBudget) : profile?.budgetRange ?? formatMoney(budget)
   if (gap >= 0) {
     return `Against your ${budgetLabel} budget, the loaded rent estimate of ${formatMoney(rentEstimate)}/month leaves about ${formatMoney(gap)} of room before that budget mark`
   }
@@ -400,13 +401,33 @@ function selectBriefTools(profile: UserProfile): string[] {
   return tools
 }
 
-function buildBriefNarrationPrompt(profile: UserProfile, neighborhood: string, month: number): string {
+const SEASON_NOTES: Record<number, string> = {
+  1: 'bitter cold, often below 20°F, windchill off the lake',
+  2: 'still harsh, coldest stretch of the year',
+  3: 'thawing slowly, muddy and unpredictable',
+  4: 'warming up, blossoms starting, chilly evenings',
+  5: 'pleasant, outdoor season beginning',
+  6: 'warm and humid, long evenings',
+  7: 'hot and humid, peak summer, street festivals',
+  8: 'still hot, summer winding down',
+  9: 'beautiful crisp fall weather',
+  10: 'colorful fall, leaves turning, cool nights',
+  11: 'cold setting in, darkness arriving early',
+  12: 'cold, dark, often windy off the lake',
+}
+
+function buildBriefNarrationPrompt(profile: UserProfile, neighborhood: string, month: number, prevMonthSummaries?: string[]): string {
   const monthName = MONTH_NAMES[month - 1] ?? 'this month'
+  const seasonNote = SEASON_NOTES[month] ?? ''
   const topPriority = Object.entries(profile.priorities)
     .sort((a, b) => b[1] - a[1])[0]?.[0]
     ?.replaceAll(/([A-Z])/g, ' $1')
     .toLowerCase() ?? 'quality of life'
   const lifestyleStr = profile.lifestyle.length > 0 ? profile.lifestyle.join(', ') : 'not specified'
+
+  const memorySection = prevMonthSummaries && prevMonthSummaries.length > 0
+    ? `\n\nPrevious months (brief recap, use for continuity):\n${prevMonthSummaries.map((s, i) => `- Month ${month - prevMonthSummaries.length + i}: ${s}`).join('\n')}\n\nIf something from a prior month is genuinely relevant to this month's data, weave in a natural callback. Do not force it.`
+    : ''
 
   return `You are Sam, a long-time resident of ${neighborhood}. You have just pulled real civic data for ${monthName} and are opening the simulation for the first time — before the user has asked anything.
 
@@ -417,14 +438,16 @@ User profile:
 - Top priority: ${topPriority}
 - Lifestyle: ${lifestyleStr}
 ${profile.notes ? `- Context: ${profile.notes}` : ''}
-
+- Season: ${seasonNote}
+${memorySection}
 Your job: Write one paragraph (4–5 sentences) that sets the tone for what ${monthName} in ${neighborhood} would feel like for this specific user. This is an unprompted opening — not an answer to a question. Lead with the most important signal for this user's profile. Synthesize 2–3 data signals into a coherent sense of what this month is like, not a list.
 
 Rules:
+PERSONA RULE (highest priority): You are Sam, a real resident. Never break character with any of these phrases: "the data", "tool-returned", "the database", "coarse estimate", "not a CTA itinerary", "does not return", "no stop list", "sparse results", "this estimate", "the tool". Speak from lived experience, not from data report language.
 - Speak as a local. Use "around here" or "honestly" once at most.
 - Address the user in second person: "your commute", "your block", "you'd wait"
 - Translate numbers into experience. Never lead with a raw number.
-- Never invent data. If a tool returned sparse results, acknowledge that directly.
+- Never invent data. If information is limited, convey what you experientially know about this part of the city — never surface system limitations or data gaps as prose.
 - Do not say "Welcome" or introduce yourself. Open mid-thought, as if continuing a conversation.
 - 4–5 sentences max. Prose only. No bullet points.
 
@@ -528,9 +551,9 @@ export async function runMonthFullStream(
   onToolsDone: (payload: { mapActions: MapAction[]; toolsUsed: string[] }) => void,
   onChunk: (token: string) => void,
 ): Promise<ChatResponse> {
-  const { neighborhood, month, profile } = req
+  const { neighborhood, month, profile, prevMonthSummaries } = req
   const year = req.year ?? 2024
-  const toolNames = ['query_crime', 'query_transit', 'query_entertainment', 'query_commute']
+  const toolNames = ['query_crime', 'query_transit', 'query_entertainment', 'query_commute', 'get_neighborhood_profile', 'query_housing']
 
   const settled = await Promise.allSettled(
     toolNames.map((name) =>
@@ -557,7 +580,7 @@ export async function runMonthFullStream(
   }
 
   const groq = new Groq({ apiKey: process.env.GROQ_API_KEY })
-  const narrationPrompt = buildBriefNarrationPrompt(profile, neighborhood, month)
+  const narrationPrompt = buildBriefNarrationPrompt(profile, neighborhood, month, prevMonthSummaries)
   const monthName = MONTH_NAMES[month - 1] ?? 'this month'
 
   const fakeToolCallsMsg: Groq.Chat.Completions.ChatCompletionMessageParam = {
@@ -614,9 +637,9 @@ export async function runMonthFullStream(
 }
 
 export async function runMonthFull(req: BriefRequest): Promise<ChatResponse> {
-  const { neighborhood, month, profile } = req
+  const { neighborhood, month, profile, prevMonthSummaries } = req
   const year = req.year ?? 2024
-  const toolNames = ['query_crime', 'query_transit', 'query_entertainment', 'query_commute']
+  const toolNames = ['query_crime', 'query_transit', 'query_entertainment', 'query_commute', 'get_neighborhood_profile', 'query_housing']
 
   const settled = await Promise.allSettled(
     toolNames.map((name) =>
@@ -645,7 +668,7 @@ export async function runMonthFull(req: BriefRequest): Promise<ChatResponse> {
   }
 
   const groq = new Groq({ apiKey: process.env.GROQ_API_KEY })
-  const narrationPrompt = buildBriefNarrationPrompt(profile, neighborhood, month)
+  const narrationPrompt = buildBriefNarrationPrompt(profile, neighborhood, month, prevMonthSummaries)
 
   const fakeToolCallsMsg: Groq.Chat.Completions.ChatCompletionMessageParam = {
     role: 'assistant',

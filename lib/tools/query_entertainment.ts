@@ -86,16 +86,21 @@ async function fromSupabase(neighborhood: string, month?: number): Promise<Enter
 }
 
 export async function queryEntertainment(neighborhood: string, month?: number): Promise<EntertainmentResult> {
+  const key = neighborhood.toLowerCase().trim()
+
   if (hasSupabaseCredentials()) {
     try {
       const result = await fromSupabase(neighborhood, month)
       if (result) return result
+      // Supabase responded but no row — use stub only if we have one for this neighborhood
+      if (!STUBS[key]) {
+        return { restaurants: 0, bars: 0, parks: [], farmers_markets: false }
+      }
     } catch {
-      // fall through to stub
+      // Network/DB failure — fall through to stub
     }
   }
 
-  const key = neighborhood.toLowerCase().trim()
   const stub = STUBS[key] ?? DEFAULT
   return {
     restaurants: stub.restaurants,

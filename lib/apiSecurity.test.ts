@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   apiAuthResult,
   checkRateLimit,
+  getClientIp,
   rateLimitRequest,
   resetRateLimitsForTests,
   validateChatBody,
@@ -13,6 +14,7 @@ import type { UserProfile } from "./tools/types";
 
 const profile: UserProfile = {
   budgetRange: "$1,000-$1,500",
+  monthlyBudget: 1400,
   workplace: "The University of Chicago",
   workplaceLat: 41.7886,
   workplaceLng: -87.5987,
@@ -70,7 +72,22 @@ test("chat validation accepts bounded authenticated payload shape", () => {
     assert.equal(result.value.message, "What is crime like here?");
     assert.equal(result.value.history.length, 1);
     assert.equal(result.value.profile.workplaceLat, 41.7886);
+    assert.equal(result.value.profile.monthlyBudget, 1400);
   }
+});
+
+test("profile validation rejects invalid monthly budgets", () => {
+  const result = validateChatBody({
+    message: "Can I afford this?",
+    neighborhood: "Hyde Park",
+    month: 10,
+    year: 2024,
+    profile: { ...profile, monthlyBudget: 99_999 },
+    history: [],
+  });
+
+  assert.equal(result.ok, false);
+  if (!result.ok) assert.match(result.error, /monthlyBudget is invalid/i);
 });
 
 test("match validation caps topN to the public top five workflow", () => {
@@ -106,4 +123,13 @@ test("request rate limiter enforces both user and IP buckets", () => {
   assert.equal(rateLimitRequest(req("203.0.113.20"), "user_a", policy), null);
   assert.equal(rateLimitRequest(req("203.0.113.20"), "user_b", policy), null);
   assert.equal(rateLimitRequest(req("203.0.113.20"), "user_c", policy)?.status, 429);
+});
+
+test("guest discovery routes can use IP as their rate-limit identity", () => {
+  resetRateLimitsForTests();
+  const req = new Request("http://localhost/api/match", { headers: { "x-forwarded-for": "198.51.100.3" } });
+
+  assert.equal(getClientIp(req), "198.51.100.3");
+  assert.equal(rateLimitRequest(req, `guest:${getClientIp(req)}`, { name: "guest-test", max: 1, windowMs: 60_000 }), null);
+  assert.equal(rateLimitRequest(req, `guest:${getClientIp(req)}`, { name: "guest-test", max: 1, windowMs: 60_000 })?.status, 429);
 });

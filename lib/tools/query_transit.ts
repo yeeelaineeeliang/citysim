@@ -110,17 +110,20 @@ async function fromSupabase(neighborhood: string, month: number): Promise<Transi
 }
 
 export async function queryTransit(neighborhood: string, month: number): Promise<TransitResult> {
+  const key = neighborhood.toLowerCase().trim()
+
   if (hasSupabaseCredentials()) {
     try {
       const result = await fromSupabase(neighborhood, month)
       if (result === 'not_found') return NO_L_DATA
       if (result) return result
+      // null: neighborhood name not found in community_areas — signal no data for non-demo areas
+      if (key !== 'hyde park' && key !== 'oakland') return NO_L_DATA
     } catch {
-      // fall through to stub
+      // Network/DB failure — fall through to stub
     }
   }
 
-  const key = neighborhood.toLowerCase().trim()
   if (key === 'hyde park') return HYDE_PARK_2024[month] ?? DEFAULT
   if (key === 'oakland') return OAKLAND_2024
   return { ...DEFAULT, crowding_level: 'moderate' }

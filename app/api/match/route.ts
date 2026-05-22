@@ -3,9 +3,8 @@ import { matchNeighborhoods } from '@/lib/neighborhoodMatch'
 import {
   jsonError,
   RATE_LIMITS,
-  rateLimitRequest,
+  rateLimitPublicRequest,
   rejectOversizedRequest,
-  requireApiUser,
   validateMatchBody,
 } from '@/lib/apiSecurity'
 
@@ -13,10 +12,7 @@ export const dynamic = 'force-dynamic'
 
 export async function POST(request: Request) {
   try {
-    const authResult = await requireApiUser()
-    if (!authResult.ok) return authResult.response
-
-    const rateLimited = rateLimitRequest(request, authResult.userId, RATE_LIMITS.standard)
+    const rateLimited = await rateLimitPublicRequest(request, RATE_LIMITS.standard)
     if (rateLimited) return rateLimited
 
     const tooLarge = rejectOversizedRequest(request)

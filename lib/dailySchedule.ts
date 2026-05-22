@@ -185,3 +185,87 @@ export function buildDailySchedule(
 
   return events
 }
+
+function buildWeekendSchedule(
+  profile: UserProfile,
+  homeCoords: { lat: number; lng: number },
+  neighborhoodCenter: { lat: number; lng: number },
+  parks: string[],
+  month: number,
+  neighborhoodName: string,
+): DayEvent[] {
+  const parkName = parks[0] ?? `${neighborhoodName} Park`
+  const hasFitness = profile.lifestyle.includes('fitness')
+
+  // Weekend spots use different seeds from weekday to produce different locations
+  const brunchSpot    = nearbyPoint(neighborhoodCenter, month * 4 + 9,  month * 8 + 3,  0.009)
+  const afternoonSpot = nearbyPoint(neighborhoodCenter, month * 6 + 2,  month * 3 + 7,  0.007)
+  const eveningSpot   = nearbyPoint(neighborhoodCenter, month * 9 + 5,  month * 5 + 4,  0.008)
+  const parkSpot      = nearbyPoint(neighborhoodCenter, month * 2 + 5,  month * 6 + 3,  0.006)
+
+  return [
+    {
+      timeLabel: '9:00 AM',
+      activityLabel: 'Slow morning',
+      contextLabel: `${neighborhoodName} · Home`,
+      location: homeCoords,
+      kind: 'home',
+      dwellTicks: 35,
+    },
+    {
+      timeLabel: '10:30 AM',
+      activityLabel: 'Morning coffee',
+      contextLabel: `${neighborhoodName}`,
+      location: brunchSpot,
+      kind: 'errand',
+      dwellTicks: 20,
+    },
+    {
+      timeLabel: '12:00 PM',
+      activityLabel: 'Brunch out',
+      contextLabel: `${neighborhoodName} · Brunch`,
+      location: afternoonSpot,
+      kind: 'lunch',
+      dwellTicks: 30,
+    },
+    {
+      timeLabel: '2:30 PM',
+      activityLabel: hasFitness ? 'Long afternoon run' : `Afternoon at ${parkName}`,
+      contextLabel: parkName,
+      location: parkSpot,
+      kind: 'park',
+      dwellTicks: 40,
+    },
+    {
+      timeLabel: '7:00 PM',
+      activityLabel: 'Dinner out',
+      contextLabel: `${neighborhoodName} · Restaurant`,
+      location: eveningSpot,
+      kind: 'social',
+      dwellTicks: 25,
+    },
+    {
+      timeLabel: '10:00 PM',
+      activityLabel: 'Home for the night',
+      contextLabel: `${neighborhoodName} · Winding down`,
+      location: homeCoords,
+      kind: 'night',
+      dwellTicks: 20,
+    },
+  ]
+}
+
+export function buildWeekSchedule(
+  profile: UserProfile,
+  homeCoords: { lat: number; lng: number },
+  workCoords: { lat: number; lng: number } | null,
+  neighborhoodCenter: { lat: number; lng: number },
+  parks: string[],
+  month: number,
+  neighborhoodName: string,
+): DayEvent[] {
+  return [
+    ...buildDailySchedule(profile, homeCoords, workCoords, neighborhoodCenter, parks, month, neighborhoodName),
+    ...buildWeekendSchedule(profile, homeCoords, neighborhoodCenter, parks, month, neighborhoodName),
+  ]
+}

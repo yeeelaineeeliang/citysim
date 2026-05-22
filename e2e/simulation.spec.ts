@@ -43,6 +43,12 @@ test.describe("Simulation avatar scene", () => {
     const scene = page.locator('[data-testid="sim-avatar-scene"]');
     await expect(scene).toBeVisible({ timeout: 15_000 });
 
+    // The backdrop layer (Layer 1) must have real pixel height — not a black 0×0 div
+    const backdrop = scene.locator("> div").first();
+    await expect(backdrop).toBeVisible();
+    const box = await backdrop.boundingBox();
+    expect(box?.height).toBeGreaterThan(0);
+
     // The main Leaflet map container should be in the DOM
     const leafletContainer = scene.locator(".leaflet-container").first();
     await expect(leafletContainer).toBeVisible({ timeout: 10_000 });
