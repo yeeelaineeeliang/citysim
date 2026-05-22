@@ -84,6 +84,7 @@ export type MatchUserProfile =
   | UserProfile
   | {
       budget?: number | string;
+      monthlyBudget?: number;
       budgetRange?: string;
       commute_preference?: CommutePreference;
       commutePref?: CommutePreference;
@@ -218,6 +219,9 @@ function normalize(value: number, min: number, max: number) {
 }
 
 function parseBudgetCeiling(profile: MatchUserProfile): number | null {
+  const monthlyBudget = "monthlyBudget" in profile ? profile.monthlyBudget : undefined;
+  if (isFiniteNumber(monthlyBudget)) return monthlyBudget;
+
   const rawBudget = "budget" in profile ? profile.budget : undefined;
   if (isFiniteNumber(rawBudget)) return rawBudget;
 

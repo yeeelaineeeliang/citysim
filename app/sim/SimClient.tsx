@@ -1,6 +1,8 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
+import { SignInButton, SignUpButton, useUser } from "@clerk/nextjs";
+import { CalendarDays, LockKeyhole, MapIcon, MessageCircle, Play, Send, Sparkles } from "lucide-react";
 import { AuthActions } from "@/components/AuthActions";
 import { SeasonalStreetOverlay } from "@/components/SeasonalStreetOverlay";
 import { Skybox } from "@/components/Skybox";
@@ -8,20 +10,27 @@ import { WeatherLayer } from "@/components/WeatherLayer";
 import {
   groupMessagesByMonth,
   monthGroupKey,
-  toChatHistory,
   type SimMessage,
-  type SimMessageKind,
 } from "@/lib/simMessages";
-import type { EntertainmentSummaryMapAction, MapAction, UserProfile } from "@/lib/tools/types";
-import { buildDailySchedule, type DayEvent } from "@/lib/dailySchedule";
-import { fetchOSRMRoute, commuteMode } from "@/lib/fetchRoute";
+import type { UserProfile } from "@/lib/tools/types";
 import dynamic from "next/dynamic";
 import { OnboardingProfileForm } from "./OnboardingProfileForm";
 import { NEIGHBORHOOD_COORDINATES } from "@/lib/neighborhoodCoordinates";
 import type { CommunityAreaMapMatch } from "@/components/CommunityAreaBlockMap";
-import { DEMO_PROFILE, DEMO_NEIGHBORHOOD, DEMO_MONTH, DEMO_OPENING, matchDemoQA } from "@/lib/demoData";
-import { straightLineCoords } from "@/lib/decodePolyline";
-import { loadStoredProfile, saveStoredProfile } from "./profileStorage";
+import { DEMO_PROFILE, DEMO_NEIGHBORHOOD, DEMO_MONTH, DEMO_OPENING } from "@/lib/demoData";
+import { useSimProfile } from "./hooks/useSimProfile";
+import { useSimChat } from "./hooks/useSimChat";
+import { useSimRun } from "./hooks/useSimRun";
+import {
+  createSimMessage,
+  getProfileWorkplaceCoords,
+  ALL_NEIGHBORHOODS,
+  MONTH_NAMES,
+  MONTH_SHORT,
+  SIM_YEAR,
+  SUGGESTED_QUESTIONS,
+} from "./helpers";
+import type { AuthPromptReason, MobilePanel, SceneMode, Step } from "./types";
 
 const CommunityAreaBlockMap = dynamic(
   () => import("@/components/CommunityAreaBlockMap").then((m) => m.CommunityAreaBlockMap),
@@ -31,13 +40,17 @@ const SimulationMap = dynamic(
   () => import("@/components/SimulationMap").then((m) => m.SimulationMap),
   { ssr: false, loading: () => <div className="h-full w-full animate-pulse bg-white/20" /> },
 );
-const MapboxStreetScene = dynamic(
-  () => import("@/components/MapboxStreetScene").then((m) => m.MapboxStreetScene),
+const StreetViewPanorama = dynamic(
+  () => import("@/components/StreetViewPanorama").then((m) => m.StreetViewPanorama),
   { ssr: false, loading: () => <div className="h-full w-full animate-pulse bg-[#1a2530]" /> },
 );
 const AnimatedSimMap = dynamic(
   () => import("@/components/AnimatedSimMap").then((m) => m.AnimatedSimMap),
   { ssr: false, loading: () => <div className="h-full w-full animate-pulse bg-[#1a2530]" /> },
+);
+const CityViewScene = dynamic(
+  () => import("@/components/CityViewScene").then((m) => m.CityViewScene),
+  { ssr: false, loading: () => <div className="absolute inset-0 bg-[#0d1520]" /> },
 );
 const DailyLifePanel = dynamic(
   () => import("@/components/DailyLifePanel").then((m) => m.DailyLifePanel),
@@ -48,84 +61,7 @@ const SimAvatarScene = dynamic(
   { ssr: false, loading: () => <div className="absolute inset-0 bg-[#0d1520]" /> },
 );
 
-// ─── Types ────────────────────────────────────────────────────────────────────
-
-type Step = "profile" | "neighborhood" | "sim";
-type SceneMode = "street" | "map";
-type RunState = "idle" | "running" | "paused" | "done";
-
-interface AgentResponse {
-  response?: string;
-  toolsUsed?: string[];
-  mapActions?: MapAction[];
-  sessionId?: string;
-  error?: string;
-}
-
-interface NeighborhoodMatch {
-  communityAreaNumber: number;
-  name: string;
-  slug: string;
-  descriptors: string[];
-  matchReason: string;
-}
-
-// ─── Constants ────────────────────────────────────────────────────────────────
-
-const MONTH_NAMES = [
-  "January","February","March","April","May","June",
-  "July","August","September","October","November","December",
-];
-const MONTH_SHORT = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
-const SIM_YEAR = 2024;
-
-const SUGGESTED_QUESTIONS = [
-  "What is crime like here this month?",
-  "What is my morning commute like?",
-  "How responsive is the city to service issues?",
-  "What can I do on weekends here?",
-  "Can I afford to live here?",
-];
-
-const ALL_NEIGHBORHOODS = NEIGHBORHOOD_COORDINATES.map((c) => c.name).sort();
-
-function createSimMessage(role: SimMessage["role"], content: string, month: number, kind: SimMessageKind): SimMessage {
-  return { role, content, month, year: SIM_YEAR, kind };
-}
-
-function timeProgressToHeading(p: number): number {
-  if (p <= 0.10) return 45   // dawn — NE toward downtown
-  if (p <= 0.40) return 110  // morning — SE residential
-  if (p <= 0.60) return 220  // afternoon — SW commercial strip
-  if (p <= 0.78) return 290  // dusk — W (sunset direction)
-  return 170                  // night — S quieter blocks
-}
-
-function getProfileWorkplaceCoords(profile: UserProfile | null) {
-  if (!profile) return null;
-
-  const { workplaceLat, workplaceLng } = profile;
-  if (
-    typeof workplaceLat === "number" &&
-    typeof workplaceLng === "number" &&
-    Number.isFinite(workplaceLat) &&
-    Number.isFinite(workplaceLng)
-  ) {
-    return { lat: workplaceLat, lng: workplaceLng };
-  }
-
-  const legacyProfile = profile as UserProfile & { lat?: unknown; lng?: unknown };
-  if (
-    typeof legacyProfile.lat === "number" &&
-    typeof legacyProfile.lng === "number" &&
-    Number.isFinite(legacyProfile.lat) &&
-    Number.isFinite(legacyProfile.lng)
-  ) {
-    return { lat: legacyProfile.lat, lng: legacyProfile.lng };
-  }
-
-  return null;
-}
+// ─── UI-only helpers ──────────────────────────────────────────────────────────
 
 function MessageBubble({ message, compact = false }: { message: SimMessage; compact?: boolean }) {
   const isUser = message.role === "user";
@@ -164,6 +100,91 @@ function MessageBubble({ message, compact = false }: { message: SimMessage; comp
   );
 }
 
+const TOOL_EVIDENCE: Record<string, { label: string; detail: string }> = {
+  query_crime: {
+    label: "Safety",
+    detail: "Reported incident totals and neighborhood-vs-city context.",
+  },
+  query_commute: {
+    label: "Commute",
+    detail: "Distance and estimated travel time from your anchor.",
+  },
+  query_transit: {
+    label: "Transit",
+    detail: "CTA access, ridership, crowding, and route signals.",
+  },
+  query_housing: {
+    label: "Budget",
+    detail: "Rent estimates and affordable-housing stock signals.",
+  },
+  query_311: {
+    label: "City services",
+    detail: "311 request volume and average response timing.",
+  },
+  query_entertainment: {
+    label: "Daily life",
+    detail: "Restaurants, bars, parks, civic amenities, and markets.",
+  },
+  get_neighborhood_profile: {
+    label: "Profile",
+    detail: "Community-area context and local descriptors.",
+  },
+};
+
+function toolEvidence(tool: string) {
+  return TOOL_EVIDENCE[tool] ?? {
+    label: tool.replace(/^query_/, "").replaceAll("_", " "),
+    detail: "Grounded civic-data lookup used for this answer.",
+  };
+}
+
+function AuthGateCard({
+  reason,
+  onDismiss,
+}: {
+  reason: AuthPromptReason;
+  onDismiss: () => void;
+}) {
+  const title = reason === "year" ? "Save your profile to run the year" : "Save your profile to ask Sam";
+  const body =
+    reason === "year"
+      ? "The full month-by-month simulation uses protected AI calls and keeps your profile available after sign-in."
+      : "Sam uses protected grounded tools for personalized answers, maps, and session history.";
+
+  return (
+    <div className="rounded-[var(--radius-md)] border border-[rgba(101,151,184,0.36)] bg-[rgba(101,151,184,0.12)] p-4">
+      <div className="flex items-start gap-3">
+        <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white/80 text-[color:var(--lake-strong)]">
+          <LockKeyhole size={16} />
+        </span>
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-extrabold text-[color:var(--foreground)]">{title}</p>
+          <p className="mt-1 text-xs font-semibold leading-5 text-[color:var(--muted)]">{body}</p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <SignInButton mode="modal">
+              <button type="button" className="atlas-button-secondary">
+                Sign in
+              </button>
+            </SignInButton>
+            <SignUpButton mode="modal">
+              <button type="button" className="atlas-button-primary">
+                Create account
+              </button>
+            </SignUpButton>
+            <button
+              type="button"
+              onClick={onDismiss}
+              className="rounded-[var(--radius-md)] px-3 text-xs font-extrabold text-[color:var(--muted)] hover:text-[color:var(--foreground)]"
+            >
+              Keep previewing
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Component ────────────────────────────────────────────────────────────────
 
 interface SimClientProps {
@@ -171,565 +192,92 @@ interface SimClientProps {
 }
 
 export function SimClient({ demoMode = false }: Readonly<SimClientProps>) {
-  const [step, setStep] = useState<Step>("profile");
-  const [profile, setProfile] = useState<UserProfile | null>(null);
-  const [neighborhood, setNeighborhood] = useState("Hyde Park");
-  const [month, setMonth] = useState(10);
-  const [sessionId, setSessionId] = useState<string | null>(null);
-
-  // Neighborhood step state
-  const [matchMode, setMatchMode] = useState<"known" | "match" | null>(null);
-  const [matchLoading, setMatchLoading] = useState(false);
-  const [matches, setMatches] = useState<NeighborhoodMatch[]>([]);
-  const [matchError, setMatchError] = useState<string | null>(null);
-
-  // Sim step state
-  const [messages, setMessages] = useState<SimMessage[]>([]);
-  const [input, setInput] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [lastToolsUsed, setLastToolsUsed] = useState<string[]>([]);
-  const [activeMapActions, setActiveMapActions] = useState<MapAction[]>([]);
-  const [sceneMode, setSceneMode] = useState<SceneMode>("street");
-  const [openingThinking, setOpeningThinking] = useState(false);
-
-  // Auto-run state
-  const [runState, setRunState] = useState<RunState>("idle");
-  const [completedMonths, setCompletedMonths] = useState<number[]>([]);
-  const [autoRunMonth, setAutoRunMonth] = useState<number | null>(null);
-  const [autoRunNarrative, setAutoRunNarrative] = useState<string>("");
-  const [isAnimatingCommute, setIsAnimatingCommute] = useState(false);
-  const [routeCoords, setRouteCoords] = useState<[number, number][]>([]);
-  const runStateRef = useRef<RunState>("idle");
-
-  // Scene time progress — drives weather, lighting, and DailyLifePanel context
-  const [timeProgress, setTimeProgress] = useState(0);
-
-  // Daily life simulation
-  const [commuteRouteCoords, setCommuteRouteCoords] = useState<[number, number][]>([]);
-  const [dailySchedule, setDailySchedule] = useState<DayEvent[]>([]);
-  const [currentEvent, setCurrentEvent] = useState<DayEvent | null>(null);
-
-  // Demo mode — activated by ?demo=1 in the URL
+  const { isLoaded: authLoaded, isSignedIn } = useUser();
   const isDemoMode = demoMode;
 
-  const messagesEndRef = useRef<HTMLDivElement>(null);
-  const messagesRef = useRef<SimMessage[]>([]);
-  const openingRequestRef = useRef(0);
-  const openingAbortRef = useRef<AbortController | null>(null);
+  // Top-level UI state — shared across all three domains
+  const [step, setStep] = useState<Step>("profile");
+  const [month, setMonth] = useState(10);
+  const [sceneMode, setSceneMode] = useState<SceneMode>("street");
+  const [mobilePanel, setMobilePanel] = useState<MobilePanel>("map");
+  const [sessionId, setSessionId] = useState<string | null>(null);
 
-  // Prefetch refs for N+1 month
-  const prefetchChunksRef = useRef<string[]>([]);
-  const prefetchActionsRef = useRef<MapAction[] | null>(null);
-  const prefetchDoneRef = useRef(false);
+  const profileData = useSimProfile({ demoMode, setStep });
 
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, loading, openingThinking]);
+  const chat = useSimChat({
+    profile: profileData.profile,
+    neighborhood: profileData.neighborhood,
+    month,
+    sessionId,
+    setSessionId,
+    isDemoMode,
+    isSignedIn,
+    authLoaded,
+    setSceneMode,
+    setMobilePanel,
+  });
 
-  useEffect(() => {
-    messagesRef.current = messages;
-  }, [messages]);
+  const runData = useSimRun({
+    profile: profileData.profile,
+    neighborhood: profileData.neighborhood,
+    month,
+    setMonth,
+    step,
+    setMessages: chat.setMessages,
+    setActiveMapActions: chat.setActiveMapActions,
+    activeMapActions: chat.activeMapActions,
+    isDemoMode,
+    isSignedIn,
+    authLoaded,
+    setMobilePanel,
+    setAuthPrompt: chat.setAuthPrompt,
+    setSceneMode,
+  });
 
-  useEffect(() => {
-    return () => openingAbortRef.current?.abort();
-  }, []);
-
-  useEffect(() => {
-    if (isDemoMode) return;
-    const storedProfile = loadStoredProfile();
-    if (!storedProfile) return;
-    setProfile(storedProfile);
-    setStep("neighborhood");
-  }, [isDemoMode]);
-
-  // Fetch road-snapped commute route from OSRM once per (neighborhood × workplace)
-  useEffect(() => {
-    if (step !== "sim" || !profile) return;
-    const workCoords = getProfileWorkplaceCoords(profile);
-    if (!workCoords) return;
-    const homePt = NEIGHBORHOOD_COORDINATES.find((c) => c.name === neighborhood);
-    if (!homePt) return;
-
-    setCommuteRouteCoords([]);
-    fetchOSRMRoute(
-      { lat: homePt.lat, lng: homePt.lng },
-      workCoords,
-      commuteMode(profile.commutePref),
-    ).then((coords) => {
-      if (coords && coords.length >= 2) setCommuteRouteCoords(coords);
-    });
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [step, neighborhood, profile?.workplaceLat, profile?.workplaceLng]);
-
-  // Rebuild daily schedule when entertainment data or active month changes
-  useEffect(() => {
-    if (!profile) return;
-    const homePt = NEIGHBORHOOD_COORDINATES.find((c) => c.name === neighborhood);
-    if (!homePt) return;
-    const workCoords = getProfileWorkplaceCoords(profile);
-
-    const entertainmentAction = activeMapActions.find(
-      (a): a is EntertainmentSummaryMapAction => a.type === "entertainment_summary",
-    );
-    const parks = entertainmentAction?.parks ?? [];
-    const center = entertainmentAction?.center ?? { lat: homePt.lat, lng: homePt.lng };
-    const targetMonth = autoRunMonth ?? month;
-
-    setDailySchedule(
-      buildDailySchedule(
-        profile,
-        { lat: homePt.lat, lng: homePt.lng },
-        workCoords,
-        center,
-        parks,
-        targetMonth,
-        neighborhood,
-      ),
-    );
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeMapActions, autoRunMonth, neighborhood, profile]);
-
-  // Auto-run loop — processes one month whenever runState === 'running' and autoRunMonth is set
-  useEffect(() => {
-    if (runState !== "running" || autoRunMonth === null || !profile) return;
-
-    let cancelled = false;
-    const abortController = new AbortController();
-
-    async function drainSSE(
-      res: Response,
-      m: number,
-      onTools: (actions: MapAction[]) => void,
-      onChunk: (token: string) => void,
-    ): Promise<string> {
-      const reader = res.body!.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-      let fullText = "";
-      let toolsReceived = false;
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done || cancelled) break;
-        buffer += decoder.decode(value, { stream: true });
-        const parts = buffer.split("\n\n");
-        buffer = parts.pop() ?? "";
-        for (const part of parts) {
-          const line = part.split("\n").find((l) => l.startsWith("data: "));
-          if (!line) continue;
-          try {
-            const evt = JSON.parse(line.slice(6)) as {
-              type: string;
-              mapActions?: MapAction[];
-              toolsUsed?: string[];
-              text?: string;
-            };
-            if (evt.type === "tools" && !toolsReceived) {
-              toolsReceived = true;
-              const actions = evt.mapActions ?? [];
-              if (actions.length) onTools(actions);
-
-              // Kick off prefetch for N+1 as soon as tools phase is done
-              if (m < 12 && !cancelled) {
-                prefetchChunksRef.current = [];
-                prefetchActionsRef.current = null;
-                prefetchDoneRef.current = false;
-                fetch("/api/sim-month", {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json", "Accept": "text/event-stream" },
-                  body: JSON.stringify({ neighborhood, month: m + 1, year: SIM_YEAR, profile }),
-                }).then(async (r) => {
-                  if (cancelled || !r.body) return;
-                  const rdr = r.body.getReader();
-                  const dec = new TextDecoder();
-                  let buf = "";
-                  while (true) {
-                    const { done: d, value: v } = await rdr.read();
-                    if (d || cancelled) break;
-                    buf += dec.decode(v, { stream: true });
-                    const ps = buf.split("\n\n"); buf = ps.pop() ?? "";
-                    for (const p of ps) {
-                      const ln = p.split("\n").find((l) => l.startsWith("data: "));
-                      if (!ln) continue;
-                      try {
-                        const e = JSON.parse(ln.slice(6)) as { type: string; mapActions?: MapAction[]; text?: string };
-                        if (e.type === "tools" && e.mapActions) prefetchActionsRef.current = e.mapActions;
-                        if (e.type === "chunk" && e.text) prefetchChunksRef.current.push(e.text);
-                        if (e.type === "done") prefetchDoneRef.current = true;
-                      } catch { /* skip */ }
-                    }
-                  }
-                }).catch(() => { /* silent prefetch failure */ });
-              }
-            }
-            if (evt.type === "chunk" && evt.text) {
-              fullText += evt.text;
-              onChunk(fullText);
-              setTimeProgress(Math.min(1, fullText.length / 380));
-            }
-          } catch { /* skip malformed */ }
-        }
-      }
-      return fullText;
-    }
-
-    async function processMonth() {
-      const m = autoRunMonth!;
-      setAutoRunNarrative("");
-      setTimeProgress(0);
-      let fullNarrative = "";
-
-      // Check if we have a usable prefetch from the previous month
-      const hasPrefetch = prefetchChunksRef.current.length > 0;
-
-      if (hasPrefetch) {
-        if (prefetchActionsRef.current?.length) setActiveMapActions(prefetchActionsRef.current);
-
-        // Replay buffered tokens smoothly via rAF
-        let replayText = "";
-        for (const token of prefetchChunksRef.current) {
-          if (cancelled) break;
-          replayText += token;
-          setAutoRunNarrative(replayText);
-          setTimeProgress(Math.min(1, replayText.length / 380));
-          await new Promise((r) => requestAnimationFrame(r));
-        }
-        fullNarrative = replayText;
-        prefetchChunksRef.current = [];
-        prefetchActionsRef.current = null;
-
-        // If prefetch wasn't fully done, continue draining with a new fetch
-        if (!prefetchDoneRef.current && !cancelled) {
-          try {
-            const res = await fetch("/api/sim-month", {
-              method: "POST",
-              signal: abortController.signal,
-              headers: { "Content-Type": "application/json", "Accept": "text/event-stream" },
-              body: JSON.stringify({ neighborhood, month: m, year: SIM_YEAR, profile }),
-            });
-            if (res.headers.get("content-type")?.includes("text/event-stream")) {
-              const extra = await drainSSE(res, m, setActiveMapActions, (text) => setAutoRunNarrative(text));
-              if (extra) fullNarrative = extra;
-            }
-          } catch { /* continue */ }
-        }
-        prefetchDoneRef.current = false;
-      } else {
-        // Normal fetch path
-        try {
-          const res = await fetch("/api/sim-month", {
-            method: "POST",
-            signal: abortController.signal,
-            headers: { "Content-Type": "application/json", "Accept": "text/event-stream" },
-            body: JSON.stringify({ neighborhood, month: m, year: SIM_YEAR, profile }),
-          });
-
-          if (res.headers.get("content-type")?.includes("text/event-stream")) {
-            fullNarrative = await drainSSE(res, m, setActiveMapActions, (text) => setAutoRunNarrative(text));
-          } else {
-            // JSON fallback (old deployment or SSE not supported)
-            const data = (await res.json()) as { response?: string; mapActions?: MapAction[] };
-            fullNarrative = data.response ?? "";
-            setAutoRunNarrative(fullNarrative);
-            if (data.mapActions?.length) setActiveMapActions(data.mapActions);
-          }
-        } catch { /* continue even on error */ }
-      }
-
-      if (cancelled) return;
-
-      if (fullNarrative) {
-        setMessages((prev) => [...prev, createSimMessage("assistant", fullNarrative, m, "answer")]);
-      }
-
-      // 1200ms dwell after narrative completes (narrative itself provides the natural pacing)
-      await new Promise<void>((resolve) => setTimeout(resolve, 1200));
-      if (cancelled) return;
-
-      setCompletedMonths((prev) => [...prev, m]);
-      setMonth(m);
-
-      await new Promise<void>((resolve) => setTimeout(resolve, 600));
-      if (cancelled) return;
-
-      if (runStateRef.current !== "running") return;
-
-      if (m >= 12) {
-        setRunState("done");
-        runStateRef.current = "done";
-        setAutoRunMonth(null);
-      } else {
-        setAutoRunMonth(m + 1);
-      }
-    }
-
-    void processMonth();
-    return () => {
-      cancelled = true;
-      abortController.abort();
-    };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [runState, autoRunMonth]);
-
-  // Auto-start demo mode on mount
+  // Demo init — touches state from all hooks, so lives here
   useEffect(() => {
     if (!isDemoMode) return;
-    setProfile(DEMO_PROFILE);
+    profileData.setProfile(DEMO_PROFILE);
     setMonth(DEMO_MONTH);
-    setNeighborhood(DEMO_NEIGHBORHOOD);
-    setMessages([]);
+    profileData.setNeighborhood(DEMO_NEIGHBORHOOD);
     setSessionId(null);
-    setActiveMapActions([]);
+    chat.setActiveMapActions([]);
     setSceneMode("street");
+    chat.setOpeningThinking(false);
     setStep("sim");
-    setOpeningThinking(false);
-    setMessages([createSimMessage("assistant", DEMO_OPENING, DEMO_MONTH, "opener")]);
+    chat.setMessages([createSimMessage("assistant", DEMO_OPENING, DEMO_MONTH, "opener")]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isDemoMode]);
 
-
-  // ── Profile complete ────────────────────────────────────────────────────────
-
-  function handleProfileComplete(p: UserProfile) {
-    saveStoredProfile(p);
-    setProfile(p);
-    setStep("neighborhood");
-    setMatchMode(null);
-    setMatches([]);
-    setMatchError(null);
-  }
-
-  // ── Auto-run controls ───────────────────────────────────────────────────────
-
-  function startAutoRun() {
-    if (runState !== "idle" || !profile) return;
-    setRunState("running");
-    runStateRef.current = "running";
-    setCompletedMonths([]);
-    setAutoRunNarrative("");
-    prefetchChunksRef.current = [];
-    prefetchActionsRef.current = null;
-    prefetchDoneRef.current = false;
-    setAutoRunMonth(month);
-  }
-
-  function togglePause() {
-    if (runState === "running") {
-      setRunState("paused");
-      runStateRef.current = "paused";
-    } else if (runState === "paused") {
-      setRunState("running");
-      runStateRef.current = "running";
-      if (autoRunMonth !== null) {
-        // re-trigger the effect by resetting to the same month
-        setAutoRunMonth((m) => m);
-      }
-    }
-  }
-
-  function stopAutoRun() {
-    setRunState("idle");
-    runStateRef.current = "idle";
-    setAutoRunMonth(null);
-    setIsAnimatingCommute(false);
-    setSceneMode("street");
-  }
-
-  // ── Sam monthly opener ──────────────────────────────────────────────────────
-
-  function localOpeningFallback(targetNeighborhood: string, targetMonth: number) {
-    const targetMonthName = MONTH_NAMES[targetMonth - 1] ?? "This month";
-    return `${targetMonthName} in ${targetNeighborhood} changes the feel of the streets before you even ask a question. Ask me what you want to understand about being here.`;
-  }
-
-  function insertOpening(content: string, targetMonth: number, insertIndex: number) {
-    setMessages((prev) => {
-      const next = [...prev];
-      next.splice(Math.min(insertIndex, next.length), 0, createSimMessage("assistant", content, targetMonth, "opener"));
-      messagesRef.current = next;
-      return next;
-    });
-  }
-
-  async function fetchOpening(
-    targetNeighborhood: string,
-    targetMonth: number,
-    currentProfile: UserProfile,
-    options: { reset?: boolean } = {},
-  ) {
-    openingAbortRef.current?.abort();
-    const requestId = openingRequestRef.current + 1;
-    openingRequestRef.current = requestId;
-
-    const insertIndex = options.reset ? 0 : messagesRef.current.length;
-    if (options.reset) {
-      messagesRef.current = [];
-      setMessages([]);
-    }
-
-    setError(null);
-    setLastToolsUsed([]);
-    setOpeningThinking(false);
-
-    if (isDemoMode) {
-      insertOpening(
-        targetMonth === DEMO_MONTH && targetNeighborhood === DEMO_NEIGHBORHOOD
-          ? DEMO_OPENING
-          : localOpeningFallback(targetNeighborhood, targetMonth),
-        targetMonth,
-        insertIndex,
-      );
-      return;
-    }
-
-    const controller = new AbortController();
-    openingAbortRef.current = controller;
-    const thinkingTimer = window.setTimeout(() => {
-      if (openingRequestRef.current === requestId) setOpeningThinking(true);
-    }, 2000);
-
-    try {
-      const res = await fetch("/api/opening", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        signal: controller.signal,
-        body: JSON.stringify({
-          neighborhood: targetNeighborhood,
-          month: targetMonth,
-          year: SIM_YEAR,
-          profile: currentProfile,
-        }),
-      });
-      const data = (await res.json()) as { response?: string; error?: string };
-      if (openingRequestRef.current !== requestId) return;
-      if (res.ok && data.response) {
-        insertOpening(data.response, targetMonth, insertIndex);
-      } else {
-        insertOpening(localOpeningFallback(targetNeighborhood, targetMonth), targetMonth, insertIndex);
-      }
-    } catch (err) {
-      if (openingRequestRef.current !== requestId) return;
-      if (err instanceof Error && err.name === "AbortError") return;
-      insertOpening(localOpeningFallback(targetNeighborhood, targetMonth), targetMonth, insertIndex);
-    } finally {
-      window.clearTimeout(thinkingTimer);
-      if (openingRequestRef.current === requestId) {
-        setOpeningThinking(false);
-        openingAbortRef.current = null;
-      }
-    }
-  }
-
-  // ── Neighborhood matching ───────────────────────────────────────────────────
-
-  async function runMatching() {
-    if (!profile) return;
-    setMatchLoading(true);
-    setMatchError(null);
-    try {
-      const res = await fetch("/api/match", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ profile, topN: 5 }),
-      });
-      const data = (await res.json()) as { matches?: NeighborhoodMatch[]; error?: string };
-      if (!res.ok || data.error) throw new Error(data.error ?? "Matching failed");
-      setMatches(data.matches ?? []);
-    } catch (err) {
-      setMatchError(err instanceof Error ? err.message : "Could not load matches");
-    } finally {
-      setMatchLoading(false);
-    }
-  }
+  // ── Neighborhood / month coordination ────────────────────────────────────────
 
   function pickNeighborhood(name: string) {
-    setNeighborhood(name);
+    profileData.setNeighborhood(name);
     setSessionId(null);
-    setActiveMapActions([]);
+    chat.setActiveMapActions([]);
     setSceneMode("street");
     setStep("sim");
-    if (profile) void fetchOpening(name, month, profile, { reset: true });
+    setMobilePanel("map");
+    if (profileData.profile) void chat.fetchOpening(name, month, profileData.profile, { reset: true });
   }
 
   function changeMonth(nextMonth: number) {
     if (nextMonth === month) return;
     setMonth(nextMonth);
-    setActiveMapActions([]);
-    if (profile && step === "sim") void fetchOpening(neighborhood, nextMonth, profile);
+    chat.setActiveMapActions([]);
+    if (profileData.profile && step === "sim") {
+      void chat.fetchOpening(profileData.neighborhood, nextMonth, profileData.profile);
+    }
   }
 
   function changeNeighborhood(nextNeighborhood: string) {
-    if (nextNeighborhood === neighborhood) return;
-    setNeighborhood(nextNeighborhood);
+    if (nextNeighborhood === profileData.neighborhood) return;
+    profileData.setNeighborhood(nextNeighborhood);
     setSessionId(null);
-    setActiveMapActions([]);
+    chat.setActiveMapActions([]);
     setSceneMode("street");
-    if (profile) void fetchOpening(nextNeighborhood, month, profile, { reset: true });
-  }
-
-  // ── Chat send ───────────────────────────────────────────────────────────────
-
-  async function send(question: string) {
-    if (!question.trim() || !profile || loading) return;
-
-    const userMessage = question.trim();
-    setInput("");
-    setError(null);
-    setLastToolsUsed([]);
-
-    // Demo mode: serve pre-canned answer if question matches
-    if (isDemoMode) {
-      const match = matchDemoQA(userMessage, month);
-      if (match) {
-        setMessages((prev) => [
-          ...prev,
-          createSimMessage("user", userMessage, month, "user"),
-          createSimMessage("assistant", match.answer, month, "answer"),
-        ]);
-        setLastToolsUsed(match.toolsUsed);
-        if (match.mapActions?.length) {
-          setActiveMapActions(match.mapActions);
-          setSceneMode("map");
-        }
-        return;
-      }
-    }
-
-    const next: SimMessage[] = [...messages, createSimMessage("user", userMessage, month, "user")];
-    setMessages(next);
-    setLoading(true);
-
-    try {
-      const res = await fetch("/api/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          message: userMessage,
-          neighborhood,
-          month,
-          year: SIM_YEAR,
-          profile,
-          history: toChatHistory(messages),
-          sessionId,
-        }),
-      });
-
-      const data = (await res.json()) as AgentResponse;
-      if (!res.ok || data.error) throw new Error(data.error ?? "Agent request failed");
-      if (!data.response) throw new Error("Empty response from agent");
-
-      setMessages([...next, createSimMessage("assistant", data.response, month, "answer")]);
-      if (data.toolsUsed) setLastToolsUsed(data.toolsUsed);
-      if (data.mapActions?.length) {
-        setActiveMapActions(data.mapActions);
-        setSceneMode("map");
-      }
-      if (data.sessionId && !sessionId) setSessionId(data.sessionId);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Something went wrong");
-      setMessages(messages);
-    } finally {
-      setLoading(false);
+    if (profileData.profile) {
+      void chat.fetchOpening(nextNeighborhood, month, profileData.profile, { reset: true });
     }
   }
 
@@ -739,7 +287,7 @@ export function SimClient({ demoMode = false }: Readonly<SimClientProps>) {
         {SUGGESTED_QUESTIONS.map((q) => (
           <button
             key={q}
-            onClick={() => void send(q)}
+            onClick={() => void chat.send(q)}
             className="rounded-[var(--radius-sm)] border border-[color:var(--panel-border)] bg-white/72 px-3 py-2 text-left text-xs font-bold text-[color:var(--muted-strong)] transition-colors hover:border-[color:var(--sage)] hover:bg-white hover:text-[color:var(--sage-strong)]"
           >
             {q}
@@ -766,7 +314,7 @@ export function SimClient({ demoMode = false }: Readonly<SimClientProps>) {
           </header>
 
           <section className="grid gap-6 lg:grid-cols-[minmax(0,0.78fr)_minmax(420px,1fr)]">
-            <div className="min-h-[320px] rounded-[var(--radius-xl)] border border-white/15 bg-[linear-gradient(145deg,rgba(5,32,48,0.92),rgba(19,89,120,0.78))] p-7 text-white shadow-[var(--shadow-lg)]">
+            <div className="min-h-[320px] rounded-[var(--radius-xl)] border border-white/15 bg-[linear-gradient(145deg,rgba(79,111,69,0.94),rgba(199,101,69,0.7))] p-7 text-white shadow-[var(--shadow-lg)]">
               <div className="flex h-full min-h-[280px] flex-col justify-between">
                 <div>
                   <p className="atlas-kicker text-white/62">Living profile</p>
@@ -786,7 +334,7 @@ export function SimClient({ demoMode = false }: Readonly<SimClientProps>) {
             </div>
 
             <section className="atlas-surface p-4 sm:p-6">
-              <OnboardingProfileForm onComplete={handleProfileComplete} />
+              <OnboardingProfileForm onComplete={profileData.handleProfileComplete} />
             </section>
           </section>
         </div>
@@ -800,8 +348,8 @@ export function SimClient({ demoMode = false }: Readonly<SimClientProps>) {
 
   if (step === "neighborhood") {
     return (
-      <main className="atlas-page min-h-screen px-5 py-5 text-[color:var(--foreground)] sm:px-8 sm:py-7">
-        <div className="mx-auto flex w-full max-w-7xl flex-col gap-6">
+      <main className="atlas-page atlas-page-neighborhood min-h-screen px-5 py-5 text-[color:var(--foreground)] sm:px-8 sm:py-7">
+        <div className="mx-auto flex min-h-[calc(100vh-2.5rem)] w-full max-w-[1760px] flex-col gap-6 sm:min-h-[calc(100vh-3.5rem)]">
           <header className="atlas-topbar">
             <a className="atlas-brand" href="/">
               <span className="atlas-brand-mark" />
@@ -810,7 +358,7 @@ export function SimClient({ demoMode = false }: Readonly<SimClientProps>) {
             <div className="flex items-center gap-3">
               <button
                 onClick={() => setStep("profile")}
-                className="hidden text-xs font-bold uppercase tracking-[0.12em] text-white/70 hover:text-white sm:inline-flex"
+                className="hidden text-xs font-bold tracking-[0.08em] text-[color:var(--foreground)] opacity-70 hover:opacity-100 sm:inline-flex"
               >
                 Edit profile
               </button>
@@ -818,33 +366,35 @@ export function SimClient({ demoMode = false }: Readonly<SimClientProps>) {
             </div>
           </header>
 
-          <section className="grid gap-6 lg:grid-cols-[360px_minmax(0,1fr)]">
-            <aside className="text-white">
-              <p className="atlas-kicker text-white/62">Neighborhood fit</p>
+          <section className="grid min-h-0 flex-1 gap-6 lg:h-[calc(100vh-8.25rem)] lg:max-h-[calc(100vh-8.25rem)] lg:min-h-[640px] lg:overflow-hidden lg:grid-cols-[340px_minmax(0,1fr)] 2xl:grid-cols-[360px_minmax(0,1fr)]">
+            <aside className="atlas-card h-fit p-5 text-[color:var(--foreground)] lg:sticky lg:top-24">
+              <p className="atlas-kicker text-[color:var(--muted)]">Neighborhood fit</p>
               <h1 className="mt-4 text-4xl font-semibold leading-[1.02] tracking-normal sm:text-5xl">
                 Pick a place to try on.
               </h1>
               <div className="mt-6 grid gap-3">
-                <div className="rounded-[var(--radius-md)] border border-white/14 bg-white/10 p-4 backdrop-blur">
-                  <p className="text-sm font-bold text-white/68">Budget</p>
-                  <p className="mt-1 text-xl font-semibold">{profile?.budgetRange ?? "Set"}</p>
+                <div className="rounded-[var(--radius-md)] border border-[color:var(--panel-border)] bg-white/62 p-4">
+                  <p className="text-sm font-bold text-[color:var(--muted)]">Budget</p>
+                  <p className="mt-1 text-xl font-semibold">{profileData.profile?.budgetRange ?? "Set"}</p>
                 </div>
-                <div className="rounded-[var(--radius-md)] border border-white/14 bg-white/10 p-4 backdrop-blur">
-                  <p className="text-sm font-bold text-white/68">Anchor</p>
-                  <p className="mt-1 line-clamp-2 text-xl font-semibold">{profile?.workplace ?? "Workplace"}</p>
+                <div className="rounded-[var(--radius-md)] border border-[color:var(--panel-border)] bg-white/62 p-4">
+                  <p className="text-sm font-bold text-[color:var(--muted)]">Anchor</p>
+                  <p className="mt-1 line-clamp-2 text-xl font-semibold">{profileData.profile?.workplace ?? "Workplace"}</p>
                 </div>
               </div>
             </aside>
 
-            <section className="atlas-surface min-h-[560px] p-4 sm:p-5">
-              <div className="mb-5 flex flex-col justify-between gap-3 sm:flex-row sm:items-end">
+            <section className="atlas-surface flex min-h-[560px] flex-col p-4 sm:p-5 lg:h-full lg:min-h-0 lg:overflow-hidden">
+              <div className="mb-5 flex shrink-0 flex-col justify-between gap-3 sm:flex-row sm:items-end">
                 <div>
                   <p className="atlas-kicker text-[color:var(--muted)]">Chicago community areas</p>
-                  <h2 className="mt-2 text-2xl font-extrabold">Choose or match</h2>
+                  <h2 className="mt-2 text-2xl font-extrabold">
+                    {profileData.matchMode ? profileData.neighborhood : "Choose or match"}
+                  </h2>
                 </div>
-                {matchMode && (
+                {profileData.matchMode && (
                   <button
-                    onClick={() => setMatchMode(null)}
+                    onClick={() => profileData.setMatchMode(null)}
                     className="atlas-button-secondary self-start"
                   >
                     Back
@@ -852,10 +402,10 @@ export function SimClient({ demoMode = false }: Readonly<SimClientProps>) {
                 )}
               </div>
 
-              {!matchMode && (
+              {!profileData.matchMode && (
                 <div className="grid gap-3 md:grid-cols-2">
                   <button
-                    onClick={() => setMatchMode("known")}
+                    onClick={() => profileData.setMatchMode("known")}
                     className="atlas-card min-h-48 p-6 text-left transition hover:border-[color:var(--sage)] hover:shadow-[var(--shadow)]"
                   >
                     <p className="text-sm font-bold text-[color:var(--terracotta)]">Browse</p>
@@ -865,7 +415,7 @@ export function SimClient({ demoMode = false }: Readonly<SimClientProps>) {
                     </p>
                   </button>
                   <button
-                    onClick={() => { setMatchMode("match"); void runMatching(); }}
+                    onClick={() => { profileData.setMatchMode("match"); void profileData.runMatching(); }}
                     className="atlas-card min-h-48 p-6 text-left transition hover:border-[color:var(--sage)] hover:shadow-[var(--shadow)]"
                   >
                     <p className="text-sm font-bold text-[color:var(--sage-strong)]">Match</p>
@@ -877,21 +427,29 @@ export function SimClient({ demoMode = false }: Readonly<SimClientProps>) {
                 </div>
               )}
 
-              {matchMode === "known" && (
-                <CommunityAreaBlockMap
-                  selectedName={neighborhood}
-                  onSelect={setNeighborhood}
-                  onConfirm={pickNeighborhood}
-                  workplaceCoords={getProfileWorkplaceCoords(profile)}
-                  workplaceName={profile?.workplace}
-                />
+              {profileData.matchMode === "known" && (
+                <div className="min-h-0 flex-1">
+                  <CommunityAreaBlockMap
+                    selectedName={profileData.neighborhood}
+                    onSelect={profileData.setNeighborhood}
+                    onConfirm={pickNeighborhood}
+                    workplaceCoords={getProfileWorkplaceCoords(profileData.profile)}
+                    workplaceName={profileData.profile?.workplace}
+                    budgetRange={profileData.profile?.budgetRange}
+                    monthlyBudget={profileData.profile?.monthlyBudget}
+                    commutePref={profileData.profile?.commutePref}
+                    priorities={profileData.profile?.priorities}
+                    month={month}
+                    year={SIM_YEAR}
+                  />
+                </div>
               )}
 
-              {matchMode === "match" && (
-                <div>
-                  {matchLoading && (
-                    <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_300px]">
-                      <div className="h-[520px] animate-pulse rounded-[var(--radius-lg)] bg-[color:var(--sage-100)]" />
+              {profileData.matchMode === "match" && (
+                <div className="min-h-0 flex-1">
+                  {profileData.matchLoading && (
+                    <div className="grid h-full min-h-[560px] gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
+                      <div className="h-full min-h-[560px] animate-pulse rounded-[var(--radius-lg)] bg-[color:var(--sage-100)]" />
                       <div className="grid content-start gap-3">
                         {[0, 1, 2, 3, 4].map((item) => (
                           <div key={item} className="h-20 animate-pulse rounded-[var(--radius-md)] bg-white/58" />
@@ -899,25 +457,33 @@ export function SimClient({ demoMode = false }: Readonly<SimClientProps>) {
                       </div>
                     </div>
                   )}
-                  {matchError && (
-                    <p className="rounded-[var(--radius-md)] border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{matchError}</p>
+                  {profileData.matchError && (
+                    <p className="rounded-[var(--radius-md)] border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{profileData.matchError}</p>
                   )}
-                  {!matchLoading && !matchError && matches.length === 0 && (
-                    <div className="grid gap-4">
+                  {!profileData.matchLoading && !profileData.matchError && profileData.matches.length === 0 && (
+                    <div className="grid h-full min-h-0 gap-4">
                       <p className="rounded-[var(--radius-md)] border border-[color:var(--panel-border)] bg-white/72 px-4 py-3 text-sm font-semibold text-[color:var(--muted)]">
                         No matches returned. Choose a neighborhood directly or try again later.
                       </p>
-                      <CommunityAreaBlockMap
-                        selectedName={neighborhood}
-                        onSelect={setNeighborhood}
-                        onConfirm={pickNeighborhood}
-                        workplaceCoords={getProfileWorkplaceCoords(profile)}
-                        workplaceName={profile?.workplace}
-                      />
+                      <div className="min-h-0 flex-1">
+                        <CommunityAreaBlockMap
+                          selectedName={profileData.neighborhood}
+                          onSelect={profileData.setNeighborhood}
+                          onConfirm={pickNeighborhood}
+                          workplaceCoords={getProfileWorkplaceCoords(profileData.profile)}
+                          workplaceName={profileData.profile?.workplace}
+                          budgetRange={profileData.profile?.budgetRange}
+                          monthlyBudget={profileData.profile?.monthlyBudget}
+                          commutePref={profileData.profile?.commutePref}
+                          priorities={profileData.profile?.priorities}
+                          month={month}
+                          year={SIM_YEAR}
+                        />
+                      </div>
                     </div>
                   )}
-                  {!matchLoading && matches.length > 0 && (() => {
-                    const mapMatches: CommunityAreaMapMatch[] = matches.map((m, i) => ({
+                  {!profileData.matchLoading && profileData.matches.length > 0 && (() => {
+                    const mapMatches: CommunityAreaMapMatch[] = profileData.matches.map((m, i) => ({
                       communityAreaNumber: m.communityAreaNumber,
                       name: m.name,
                       slug: m.slug,
@@ -927,15 +493,23 @@ export function SimClient({ demoMode = false }: Readonly<SimClientProps>) {
                     }));
 
                     return (
-                      <CommunityAreaBlockMap
-                        selectedName={neighborhood}
-                        onSelect={setNeighborhood}
-                        onConfirm={pickNeighborhood}
-                        matches={mapMatches}
-                        mode="match"
-                        workplaceCoords={getProfileWorkplaceCoords(profile)}
-                        workplaceName={profile?.workplace}
-                      />
+                      <div className="h-full min-h-0">
+                        <CommunityAreaBlockMap
+                          selectedName={profileData.neighborhood}
+                          onSelect={profileData.setNeighborhood}
+                          onConfirm={pickNeighborhood}
+                          matches={mapMatches}
+                          mode="match"
+                          workplaceCoords={getProfileWorkplaceCoords(profileData.profile)}
+                          workplaceName={profileData.profile?.workplace}
+                          budgetRange={profileData.profile?.budgetRange}
+                          monthlyBudget={profileData.profile?.monthlyBudget}
+                          commutePref={profileData.profile?.commutePref}
+                          priorities={profileData.profile?.priorities}
+                          month={month}
+                          year={SIM_YEAR}
+                        />
+                      </div>
                     );
                   })()}
                 </div>
@@ -950,6 +524,18 @@ export function SimClient({ demoMode = false }: Readonly<SimClientProps>) {
   // ══════════════════════════════════════════════════════════════════════════════
   // Simulation step
   // ══════════════════════════════════════════════════════════════════════════════
+
+  const { neighborhood, profile } = profileData;
+  const {
+    messages, input, setInput, loading, error, lastToolsUsed,
+    activeMapActions, openingThinking, authPrompt, setAuthPrompt, messagesEndRef,
+  } = chat;
+  const {
+    runState, completedMonths, autoRunMonth, autoRunNarrative,
+    isTransitioning, timeProgress, dailySchedule, currentEvent, setCurrentEvent,
+    streetViewCoords, streetViewHeading, routeCoords, commuteRouteCoords,
+    startAutoRun, togglePause, stopAutoRun,
+  } = runData;
 
   const monthName = MONTH_NAMES[month - 1] ?? "this month";
   const sceneCoords = NEIGHBORHOOD_COORDINATES.find((c) => c.name === neighborhood);
@@ -982,9 +568,9 @@ export function SimClient({ demoMode = false }: Readonly<SimClientProps>) {
             <a href="/sim" className="underline opacity-70 hover:opacity-100">Exit demo</a>
           </div>
         )}
-        <header className="flex flex-col gap-3 border-b border-white/12 bg-[rgba(79,111,69,0.72)] px-4 py-2.5 shadow-lg backdrop-blur-xl sm:flex-row sm:items-center sm:gap-4">
-          <div className="flex flex-1 flex-col gap-3 sm:flex-row sm:items-center sm:gap-4">
-            <div className="flex shrink-0 items-center gap-2">
+        <header className="flex flex-col gap-3 overflow-hidden border-b border-white/12 bg-[rgba(79,111,69,0.72)] px-3 py-2.5 shadow-lg backdrop-blur-xl md:flex-row md:items-center md:gap-4 md:px-4">
+          <div className="flex min-w-0 flex-1 flex-col gap-3 md:flex-row md:items-center md:gap-4">
+            <div className="flex min-w-0 shrink-0 items-center gap-2">
               <label className="text-xs font-extrabold uppercase tracking-[0.14em] text-white/65">
                 Neighborhood
               </label>
@@ -994,7 +580,7 @@ export function SimClient({ demoMode = false }: Readonly<SimClientProps>) {
                   const next = e.target.value;
                   changeNeighborhood(next);
                 }}
-                className="rounded-[var(--radius-sm)] border border-white/20 bg-white/95 px-2 py-1 text-sm font-bold text-[color:var(--foreground)] outline-none focus:border-[color:var(--amber)]"
+                className="min-w-0 rounded-[var(--radius-sm)] border border-white/20 bg-white/95 px-2 py-1 text-sm font-bold text-[color:var(--foreground)] outline-none focus:border-[color:var(--amber)]"
               >
                 {ALL_NEIGHBORHOODS.map((n) => (
                   <option key={n} value={n}>{n}</option>
@@ -1002,7 +588,7 @@ export function SimClient({ demoMode = false }: Readonly<SimClientProps>) {
               </select>
             </div>
 
-            <div className="atlas-scrollbar flex flex-1 gap-1 overflow-x-auto">
+            <div className="atlas-scrollbar flex w-full min-w-0 flex-1 gap-1 overflow-x-auto md:w-auto">
               {MONTH_SHORT.map((name, i) => {
                 const m = i + 1;
                 const isCompleted = completedMonths.includes(m);
@@ -1012,6 +598,7 @@ export function SimClient({ demoMode = false }: Readonly<SimClientProps>) {
                   <button
                     key={name}
                     onClick={() => changeMonth(m)}
+                    title={isCompleted ? `View ${name} recap` : undefined}
                     className={`shrink-0 rounded-[var(--radius-sm)] px-2.5 py-1.5 text-xs font-bold transition-colors ${
                       isCompleted
                         ? "bg-[color:var(--park)] text-white"
@@ -1022,21 +609,21 @@ export function SimClient({ demoMode = false }: Readonly<SimClientProps>) {
                             : "text-white/65 hover:bg-white/15 hover:text-white"
                     }`}
                   >
-                    {isCompleted ? `✓` : name}
+                    {isCompleted ? `✓ ${name}` : name}
                   </button>
                 );
               })}
             </div>
           </div>
 
-          <div className="flex shrink-0 items-center gap-3">
+          <div className="flex shrink-0 items-center justify-between gap-3">
             <button
               onClick={() => setStep("neighborhood")}
               className="text-xs font-bold uppercase tracking-[0.12em] text-white/65 hover:text-white"
             >
-              Change neighborhood
+              Change<span className="hidden sm:inline"> neighborhood</span>
             </button>
-            <AuthActions className="border-white/20 bg-white/15" />
+            <AuthActions className="hidden border-white/20 bg-white/15 md:inline-flex" />
           </div>
         </header>
 
@@ -1044,25 +631,50 @@ export function SimClient({ demoMode = false }: Readonly<SimClientProps>) {
         {runState !== "idle" && sceneCoords && (() => {
           const sceneMonth = autoRunMonth ?? month;
           return (
-            <div data-testid="sim-avatar-scene" className="relative min-h-0 flex-1 overflow-hidden">
-              {/* Layer 1: Leaflet avatar scene — dark map, animated avatar, mini-map HUD */}
-              <SimAvatarScene
-                lat={sceneCoords.lat}
-                lng={sceneCoords.lng}
-                workplaceCoords={workplaceCoords}
-                routeCoords={routeCoords}
-                isAnimating={runState === "running"}
-                month={sceneMonth}
-                schedule={dailySchedule.length > 0 ? dailySchedule : undefined}
-                commuteRouteCoords={commuteRouteCoords.length > 0 ? commuteRouteCoords : undefined}
-                onEventChange={setCurrentEvent}
-                neighborhoodName={neighborhood}
-                workplaceName={profile?.workplace}
-              />
-              {/* Layer 2: CSS weather particles — works over any background */}
+            <div data-testid="sim-avatar-scene" className="relative min-h-0 flex-1 overflow-hidden bg-black">
+              {/* Layer 1: Atmospheric backdrop */}
+              <div className="absolute inset-0">
+                <Skybox
+                  month={sceneMonth}
+                  crimeSignal={0}
+                  serviceSignal={null}
+                  transitSignal={0}
+                  fullBleed
+                  showElements
+                />
+                <CityViewScene
+                  lat={(streetViewCoords ?? sceneCoords).lat}
+                  lng={(streetViewCoords ?? sceneCoords).lng}
+                  month={sceneMonth}
+                  timeProgress={timeProgress}
+                  mapActions={activeMapActions}
+                />
+              </div>
+              {/* Layer 2: Avatar route map — corner inset */}
+              <div
+                data-testid="mini-map"
+                className="absolute overflow-hidden rounded-xl border border-white/20 shadow-2xl"
+                style={{ bottom: 168, right: 16, width: 280, height: 180, zIndex: 1050 }}
+              >
+                <SimAvatarScene
+                  lat={sceneCoords.lat}
+                  lng={sceneCoords.lng}
+                  workplaceCoords={workplaceCoords}
+                  routeCoords={routeCoords}
+                  isAnimating={runState === "running"}
+                  month={sceneMonth}
+                  schedule={dailySchedule.length > 0 ? dailySchedule : undefined}
+                  commuteRouteCoords={commuteRouteCoords.length > 0 ? commuteRouteCoords : undefined}
+                  onEventChange={setCurrentEvent}
+                  neighborhoodName={neighborhood}
+                  workplaceName={profile?.workplace}
+                  compact
+                />
+              </div>
+              {/* Layer 3: CSS weather particles */}
               <WeatherLayer month={sceneMonth} />
               {/* Exit button */}
-              <div className="absolute right-4 top-4 z-[1050]">
+              <div className="absolute right-4 top-4 z-[1100]">
                 <button
                   onClick={stopAutoRun}
                   className="rounded-[var(--radius-sm)] border border-white/20 bg-[rgba(19,33,43,0.82)] px-3 py-2 text-xs font-extrabold uppercase tracking-[0.12em] text-white/80 shadow backdrop-blur transition hover:bg-[color:var(--foreground)] hover:text-white"
@@ -1080,12 +692,33 @@ export function SimClient({ demoMode = false }: Readonly<SimClientProps>) {
                 timeProgress={timeProgress}
                 currentEvent={currentEvent ?? undefined}
               />
+              {/* Month transition interstitial */}
+              <div
+                className="absolute inset-0 z-[1200] flex flex-col items-center justify-center"
+                style={{
+                  background: "rgba(8,16,22,0.82)",
+                  backdropFilter: "blur(6px)",
+                  opacity: isTransitioning && autoRunMonth !== null && autoRunMonth < 12 ? 1 : 0,
+                  transition: "opacity 0.45s ease",
+                  pointerEvents: isTransitioning ? "auto" : "none",
+                }}
+              >
+                <p className="mb-2 text-xs font-extrabold uppercase tracking-[0.18em] text-white/40">
+                  {autoRunMonth != null ? MONTH_NAMES[autoRunMonth - 1] : ""} ✓
+                </p>
+                <p className="text-4xl font-bold tracking-tight text-white">
+                  {autoRunMonth != null ? MONTH_NAMES[autoRunMonth] : ""}
+                </p>
+                <p className="mt-2 text-sm text-white/50">
+                  {autoRunMonth != null ? `Month ${autoRunMonth + 1} of 12` : ""}
+                </p>
+              </div>
             </div>
           );
         })()}
 
-        <main className={`grid min-h-0 flex-1 grid-rows-[minmax(360px,56vh)_minmax(0,1fr)] lg:grid-cols-[minmax(0,1fr)_420px] lg:grid-rows-1 ${runState !== "idle" ? "hidden" : ""}`}>
-          <section className="relative min-h-0 overflow-hidden bg-black/20">
+        <main className={`grid min-h-0 flex-1 pb-[72px] lg:grid-cols-[minmax(0,1fr)_420px] lg:grid-rows-1 lg:pb-0 ${runState !== "idle" ? "hidden" : ""}`}>
+          <section className={`relative min-h-0 overflow-hidden bg-black/20 ${mobilePanel !== "map" ? "max-lg:hidden" : ""}`}>
             <div className="relative h-full w-full overflow-hidden bg-black/35 shadow-2xl">
               <div className="relative h-full min-h-[360px] w-full lg:min-h-0">
                   {sceneMode === "map" && sceneCoords ? (
@@ -1097,7 +730,7 @@ export function SimClient({ demoMode = false }: Readonly<SimClientProps>) {
                       mapActions={activeMapActions}
                     />
                   ) : sceneCoords && runState === "idle" ? (
-                    <MapboxStreetScene lat={sceneCoords.lat} lng={sceneCoords.lng} month={month} />
+                    <StreetViewPanorama lat={sceneCoords.lat} lng={sceneCoords.lng} month={month} />
                   ) : (
                     <Skybox
                       month={month}
@@ -1110,31 +743,6 @@ export function SimClient({ demoMode = false }: Readonly<SimClientProps>) {
                   )}
                   {sceneMode === "street" && (
                     <SeasonalStreetOverlay month={month} monthName={monthName} neighborhood={neighborhood} />
-                  )}
-                  {/* Hero CTA — overlaid on scene when simulation hasn't started */}
-                  {runState === "idle" && (
-                    <div className="absolute inset-0 z-[800] flex flex-col items-center justify-center px-6">
-                      <div className="w-full max-w-sm rounded-[var(--radius-lg)] border border-white/20 bg-[rgba(19,33,43,0.62)] px-6 py-7 text-center shadow-2xl backdrop-blur-md">
-                        <p className="mb-2 text-xs font-extrabold uppercase tracking-[0.16em] text-white/60">
-                          {neighborhood} · {monthName}
-                        </p>
-                        <h2 className="mb-1 text-2xl font-bold leading-tight text-white">
-                          Simulate your year
-                        </h2>
-                        <p className="mb-5 text-sm leading-relaxed text-white/65">
-                          A month-by-month story of your life here — commute, weather, city rhythms.
-                        </p>
-                        <button
-                          onClick={startAutoRun}
-                          className="atlas-button-primary w-full"
-                        >
-                          Run my year in {neighborhood}
-                        </button>
-                        <p className="mt-4 text-xs text-white/45">
-                          Or ask Sam a question in the chat
-                        </p>
-                      </div>
-                    </div>
                   )}
                   <div className="pointer-events-none absolute inset-x-0 top-0 z-[1000] flex flex-wrap items-start justify-between gap-3 bg-gradient-to-b from-black/60 to-transparent px-4 py-3">
                     <div className="flex flex-wrap items-center gap-2">
@@ -1168,11 +776,17 @@ export function SimClient({ demoMode = false }: Readonly<SimClientProps>) {
             </div>
           </section>
 
-          <section className="flex min-h-0 flex-col border-t border-white/10 bg-[color:var(--panel-solid)] text-[color:var(--foreground)] shadow-2xl backdrop-blur-md lg:border-l lg:border-t-0 lg:border-white/10">
+          <section className={`flex min-h-0 flex-col border-t border-white/10 bg-[color:var(--panel-solid)] text-[color:var(--foreground)] shadow-2xl backdrop-blur-md lg:border-l lg:border-t-0 lg:border-white/10 ${mobilePanel !== "advisor" ? "max-lg:hidden" : ""}`}>
             <div className="border-b border-[color:var(--panel-border)] px-5 py-4">
               <p className="text-xs font-extrabold uppercase tracking-[0.16em] text-[color:var(--muted)]">Sam · {neighborhood}</p>
               <p className="mt-1 text-sm font-extrabold text-[color:var(--foreground)]">{monthName} {SIM_YEAR}</p>
             </div>
+
+            {authPrompt && (
+              <div className="border-b border-[color:var(--panel-border)] px-5 py-4">
+                <AuthGateCard reason={authPrompt} onDismiss={() => setAuthPrompt(null)} />
+              </div>
+            )}
 
             <div className="atlas-scrollbar min-h-0 flex-1 overflow-y-auto px-5 py-6">
               <div className="mx-auto flex max-w-2xl flex-col gap-5 lg:max-w-none">
@@ -1246,9 +860,35 @@ export function SimClient({ demoMode = false }: Readonly<SimClientProps>) {
                 )}
 
                 {lastToolsUsed.length > 0 && !loading && (
-                  <p className="text-center text-xs text-[color:var(--muted)]">
-                    ↳ {lastToolsUsed.join(", ")}
-                  </p>
+                  <details className="rounded-[var(--radius-md)] border border-[color:var(--panel-border)] bg-white/58 px-4 py-3">
+                    <summary className="flex cursor-pointer list-none items-center gap-2 text-xs font-extrabold text-[color:var(--muted-strong)]">
+                      <Sparkles size={14} /> Evidence used
+                    </summary>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      {lastToolsUsed.map((tool) => {
+                        const evidence = toolEvidence(tool);
+                        return (
+                          <span
+                            key={tool}
+                            title={evidence.detail}
+                            className="rounded-[var(--radius-sm)] border border-[rgba(101,151,184,0.3)] bg-[rgba(101,151,184,0.12)] px-2.5 py-1.5 text-xs font-bold text-[color:var(--lake-strong)]"
+                          >
+                            {evidence.label}
+                          </span>
+                        );
+                      })}
+                    </div>
+                    <div className="mt-3 grid gap-2">
+                      {lastToolsUsed.map((tool) => {
+                        const evidence = toolEvidence(tool);
+                        return (
+                          <p key={`${tool}-detail`} className="text-xs font-semibold leading-5 text-[color:var(--muted)]">
+                            <span className="font-extrabold text-[color:var(--foreground)]">{evidence.label}:</span> {evidence.detail}
+                          </p>
+                        );
+                      })}
+                    </div>
+                  </details>
                 )}
 
                 <div ref={messagesEndRef} />
@@ -1260,14 +900,14 @@ export function SimClient({ demoMode = false }: Readonly<SimClientProps>) {
                 <div className="mx-auto mb-3 max-w-2xl lg:max-w-none">
                   <button
                     onClick={startAutoRun}
-                    className="atlas-button-primary w-full"
+                    className="atlas-button-primary w-full gap-2"
                   >
-                    Run my year in {neighborhood}
+                    <Play size={16} /> Run my year in {neighborhood}
                   </button>
                 </div>
               )}
               <form
-                onSubmit={(e) => { e.preventDefault(); void send(input); }}
+                onSubmit={(e) => { e.preventDefault(); void chat.send(input); }}
                 className="mx-auto flex max-w-2xl gap-2 lg:max-w-none"
               >
                 <input
@@ -1281,14 +921,72 @@ export function SimClient({ demoMode = false }: Readonly<SimClientProps>) {
                 <button
                   type="submit"
                   disabled={!input.trim() || loading}
-                  className="rounded-[var(--radius-md)] bg-[color:var(--accent)] px-5 py-2.5 text-sm font-extrabold text-white transition hover:bg-[color:var(--accent-strong)] disabled:opacity-40"
+                  className="inline-flex items-center gap-2 rounded-[var(--radius-md)] bg-[color:var(--accent)] px-4 py-2.5 text-sm font-extrabold text-white transition hover:bg-[color:var(--accent-strong)] disabled:opacity-40"
                 >
-                  Ask
+                  <Send size={15} /> <span className="hidden sm:inline">Ask</span>
                 </button>
               </form>
             </footer>
           </section>
+
+          <section className={`min-h-0 overflow-y-auto bg-[color:var(--panel-solid)] px-5 py-5 text-[color:var(--foreground)] lg:hidden ${mobilePanel !== "timeline" ? "hidden" : ""}`}>
+            <div className="mx-auto grid max-w-2xl gap-4">
+              <div>
+                <p className="atlas-kicker text-[color:var(--muted)]">Timeline</p>
+                <h2 className="mt-2 text-2xl font-extrabold">{neighborhood} in {SIM_YEAR}</h2>
+              </div>
+              <div className="grid gap-2">
+                {MONTH_SHORT.map((name, i) => {
+                  const m = i + 1;
+                  const isCompleted = completedMonths.includes(m);
+                  const isCurrent = month === m;
+                  return (
+                    <button
+                      key={`mobile-${name}`}
+                      type="button"
+                      onClick={() => {
+                        changeMonth(m);
+                        setMobilePanel("advisor");
+                      }}
+                      className={`flex items-center justify-between rounded-[var(--radius-md)] border px-4 py-3 text-left text-sm font-bold ${
+                        isCurrent
+                          ? "border-[color:var(--amber)] bg-[rgba(231,173,78,0.18)] text-[color:var(--foreground)]"
+                          : "border-[color:var(--panel-border)] bg-white/70 text-[color:var(--muted-strong)]"
+                      }`}
+                    >
+                      <span>{name} {SIM_YEAR}</span>
+                      <span className="text-xs text-[color:var(--muted)]">{isCompleted ? "complete" : isCurrent ? "current" : "preview"}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </section>
         </main>
+
+        {runState === "idle" && (
+          <nav className="fixed inset-x-0 bottom-0 z-[1300] grid grid-cols-3 border-t border-[color:var(--panel-border)] bg-[rgba(255,249,238,0.96)] px-3 py-2 text-[color:var(--foreground)] shadow-[0_-14px_34px_rgba(38,49,38,0.16)] backdrop-blur lg:hidden">
+            {[
+              { id: "map" as const, label: "Map", Icon: MapIcon },
+              { id: "advisor" as const, label: "Advisor", Icon: MessageCircle },
+              { id: "timeline" as const, label: "Timeline", Icon: CalendarDays },
+            ].map(({ id, label, Icon }) => (
+              <button
+                key={id}
+                type="button"
+                onClick={() => setMobilePanel(id)}
+                className={`flex min-h-12 flex-col items-center justify-center gap-1 rounded-[var(--radius-md)] text-xs font-extrabold ${
+                  mobilePanel === id
+                    ? "bg-[color:var(--foreground)] text-white"
+                    : "text-[color:var(--muted-strong)]"
+                }`}
+              >
+                <Icon size={17} />
+                {label}
+              </button>
+            ))}
+          </nav>
+        )}
       </div>
     </div>
   );

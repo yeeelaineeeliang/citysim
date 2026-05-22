@@ -13,6 +13,7 @@ function isFiniteNumber(value: unknown): value is number {
 function isUserProfile(value: unknown): value is UserProfile {
   if (!isRecord(value)) return false;
   if (typeof value.budgetRange !== "string") return false;
+  if ("monthlyBudget" in value && value.monthlyBudget !== undefined && !isFiniteNumber(value.monthlyBudget)) return false;
   if (typeof value.workplace !== "string") return false;
   if (!["transit", "driving", "walking", "biking"].includes(String(value.commutePref))) return false;
   if (!Array.isArray(value.lifestyle) || !value.lifestyle.every((item) => typeof item === "string")) return false;

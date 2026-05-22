@@ -1,4 +1,6 @@
 import type { MapPoint, UserProfile } from "@/lib/tools/types";
+import { fetchOSRMRoute } from "@/lib/fetchRoute";
+import type { OSRMMode } from "@/lib/fetchRoute";
 
 interface RouteOption {
   mode: UserProfile["commutePref"];
@@ -17,25 +19,14 @@ interface NearbyPlace {
   rating?: number;
 }
 
-const MODE_SPEED_MPH: Record<UserProfile["commutePref"], number> = {
-  driving: 18,
-  transit: 13,
-  biking: 10,
-  walking: 3.1,
-};
-
-const MODE_BUFFER_MINUTES: Record<UserProfile["commutePref"], number> = {
-  driving: 8,
-  transit: 12,
-  biking: 5,
-  walking: 2,
-};
+const TRANSIT_SPEED_MPH = 13;
+const TRANSIT_BUFFER_MINUTES = 12;
 
 function toRadians(value: number): number {
   return (value * Math.PI) / 180;
 }
 
-function distanceMiles(a: MapPoint, b: MapPoint): number {
+function haversineDistanceMiles(a: MapPoint, b: MapPoint): number {
   const earthRadiusMiles = 3958.8;
   const dLat = toRadians(b.lat - a.lat);
   const dLng = toRadians(b.lng - a.lng);
@@ -47,31 +38,43 @@ function distanceMiles(a: MapPoint, b: MapPoint): number {
   return 2 * earthRadiusMiles * Math.asin(Math.sqrt(h));
 }
 
-function fallbackRouteOption(
-  origin: MapPoint,
-  destination: MapPoint,
-  mode: UserProfile["commutePref"],
-): RouteOption {
-  const miles = distanceMiles(origin, destination);
-  const minutes = Math.max(
-    1,
-    Math.round((miles / MODE_SPEED_MPH[mode]) * 60 + MODE_BUFFER_MINUTES[mode]),
-  );
-  return {
-    mode,
-    estimatedMinutes: minutes,
-    distanceMiles: Number(miles.toFixed(1)),
-    routeLabel: "Coarse map estimate",
-    confidence: "low",
-  };
-}
+const OSRM_MODE_MAP: Partial<Record<UserProfile["commutePref"], OSRMMode>> = {
+  driving: "driving",
+  walking: "foot",
+  biking: "bike",
+};
 
 export async function computeGoogleRouteOptions(
   origin: MapPoint,
   destination: MapPoint,
   modes: UserProfile["commutePref"][],
 ): Promise<RouteOption[]> {
-  return modes.map((mode) => fallbackRouteOption(origin, destination, mode));
+  return Promise.all(
+    modes.map(async (mode) => {
+      const osrmMode = OSRM_MODE_MAP[mode];
+      if (osrmMode) {
+        const result = await fetchOSRMRoute(origin, destination, osrmMode);
+        if (result.durationSeconds !== null) {
+          const minutes = Math.max(1, Math.round(result.durationSeconds / 60));
+          const miles =
+            result.distanceMeters !== null
+              ? Number((result.distanceMeters / 1609.34).toFixed(1))
+              : Number(haversineDistanceMiles(origin, destination).toFixed(1));
+          return { mode, estimatedMinutes: minutes, distanceMiles: miles, routeLabel: "Road network route", confidence: "medium" as const };
+        }
+      }
+      // Transit uses Haversine estimate (OSRM doesn't route transit)
+      const miles = haversineDistanceMiles(origin, destination);
+      const minutes = Math.max(1, Math.round((miles / TRANSIT_SPEED_MPH) * 60 + TRANSIT_BUFFER_MINUTES));
+      return {
+        mode,
+        estimatedMinutes: minutes,
+        distanceMiles: Number(miles.toFixed(1)),
+        routeLabel: mode === "transit" ? "Distance estimate — not a CTA route plan" : "Coarse estimate",
+        confidence: "low" as const,
+      };
+    }),
+  );
 }
 
 export async function searchNearbyEntertainmentPlaces(_center: MapPoint): Promise<NearbyPlace[]> {

@@ -58,6 +58,8 @@ async function fromSupabase(neighborhood: string): Promise<HousingResult | 'not_
 }
 
 export async function queryHousing(neighborhood: string): Promise<HousingResult> {
+  const key = neighborhood.toLowerCase().trim()
+
   if (hasSupabaseCredentials()) {
     try {
       const result = await fromSupabase(neighborhood)
@@ -71,11 +73,20 @@ export async function queryHousing(neighborhood: string): Promise<HousingResult>
         }
       }
       if (result) return result
+      // null: name not in community_areas — use stub if we have one, else signal no data
+      if (!STUBS[key]) {
+        return {
+          affordable_units: 0,
+          affordable_developments: 0,
+          avg_rent_estimate: 0,
+          median_rent_estimate: null,
+          note: 'No housing data available for this neighborhood. Do not estimate or fabricate rent figures.',
+        }
+      }
     } catch {
-      // fall through to stub
+      // Network/DB failure — fall through to stub
     }
   }
 
-  const key = neighborhood.toLowerCase().trim()
   return STUBS[key] ?? DEFAULT
 }

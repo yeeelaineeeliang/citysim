@@ -107,6 +107,15 @@ export function apiAuthResult(userId: string | null | undefined): AuthValidation
   return { ok: true, userId };
 }
 
+export async function optionalApiUserId(): Promise<string | null> {
+  try {
+    const { userId } = await auth();
+    return userId ?? null;
+  } catch {
+    return null;
+  }
+}
+
 export function rejectOversizedRequest(request: Request, maxBytes = MAX_BODY_BYTES): NextResponse | null {
   const contentLength = request.headers.get("content-length");
   if (!contentLength) return null;
@@ -161,6 +170,14 @@ export function rateLimitRequest(
   return null;
 }
 
+export async function rateLimitPublicRequest(
+  request: Request,
+  policy: RateLimitPolicy,
+): Promise<NextResponse | null> {
+  const userId = await optionalApiUserId();
+  return rateLimitRequest(request, userId ?? `guest:${getClientIp(request)}`, policy);
+}
+
 function rateLimitError(retryAfterSeconds: number) {
   return NextResponse.json(
     { error: "Too many requests. Please wait a moment and try again." },
@@ -177,6 +194,19 @@ export function validateProfile(value: unknown): Validation<UserProfile> {
 
   const budgetRange = boundedString(value.budgetRange, "profile.budgetRange", 40);
   if (!budgetRange.ok) return budgetRange;
+
+  let monthlyBudget: number | undefined;
+  if (value.monthlyBudget !== undefined) {
+    if (
+      typeof value.monthlyBudget !== "number" ||
+      !Number.isFinite(value.monthlyBudget) ||
+      value.monthlyBudget < 0 ||
+      value.monthlyBudget > 20_000
+    ) {
+      return { ok: false, error: "profile.monthlyBudget is invalid" };
+    }
+    monthlyBudget = value.monthlyBudget;
+  }
 
   const workplace = boundedString(value.workplace, "profile.workplace", MAX_WORKPLACE_CHARS);
   if (!workplace.ok) return workplace;
@@ -205,6 +235,7 @@ export function validateProfile(value: unknown): Validation<UserProfile> {
 
   const profile: UserProfile = {
     budgetRange: budgetRange.value,
+    ...(monthlyBudget !== undefined ? { monthlyBudget } : {}),
     workplace: workplace.value,
     commutePref: commutePref as UserProfile["commutePref"],
     priorities: priorities.value,
@@ -293,6 +324,7 @@ export function validateBriefBody(value: unknown): Validation<{
   month: number;
   year: number;
   profile: UserProfile;
+  prevMonthSummaries: string[];
 }> {
   if (!isRecord(value)) return { ok: false, error: "request body must be an object" };
 
@@ -305,7 +337,17 @@ export function validateBriefBody(value: unknown): Validation<{
   const profile = validateProfile(value.profile);
   if (!profile.ok) return profile;
 
-  return { ok: true, value: { neighborhood: neighborhood.value, month: month.value, year: year.value, profile: profile.value } };
+  // Accept up to 3 prior-month summaries, each capped at 200 chars
+  const prevMonthSummaries: string[] = [];
+  if (Array.isArray(value.prevMonthSummaries)) {
+    for (const s of value.prevMonthSummaries.slice(0, 3)) {
+      if (typeof s === "string" && s.trim()) {
+        prevMonthSummaries.push(s.trim().slice(0, 200));
+      }
+    }
+  }
+
+  return { ok: true, value: { neighborhood: neighborhood.value, month: month.value, year: year.value, profile: profile.value, prevMonthSummaries } };
 }
 
 export function validateOpeningBody(value: unknown): Validation<{

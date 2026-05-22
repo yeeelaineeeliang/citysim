@@ -4,6 +4,7 @@ import {
   mergeCommunityAreaFallback,
   type CommunityAreaMapArea,
 } from "@/lib/communityAreaMap";
+import { getStaticCommunityAreaBoundary } from "@/lib/communityAreaStaticBoundaries";
 import { createSupabaseAdminClient, hasSupabaseCredentials } from "@/lib/supabase";
 
 export const dynamic = "force-dynamic";
@@ -20,9 +21,17 @@ interface CommunityAreaRow {
 
 function fallbackResponse() {
   return NextResponse.json(
-    { areas: getFallbackCommunityAreas() },
+    { areas: getFallbackCommunityAreas().map(withStaticBoundaryFallback) },
     { headers: { "Cache-Control": "public, max-age=300, stale-while-revalidate=3600" } },
   );
+}
+
+function withStaticBoundaryFallback(area: CommunityAreaMapArea): CommunityAreaMapArea {
+  return {
+    ...area,
+    boundaryGeojson:
+      area.boundaryGeojson ?? getStaticCommunityAreaBoundary(area.communityAreaNumber),
+  };
 }
 
 // Public read-only route: exposes non-sensitive Chicago community-area labels,
@@ -46,15 +55,17 @@ export async function GET() {
     if (error || !rows?.length) return fallbackResponse();
 
     const areas: CommunityAreaMapArea[] = rows.map((row) =>
-      mergeCommunityAreaFallback({
-        communityAreaNumber: row.community_area_number,
-        name: row.name,
-        slug: row.slug,
-        lat: row.centroid_lat,
-        lng: row.centroid_lng,
-        descriptors: row.descriptors,
-        boundaryGeojson: row.boundary_geojson,
-      }),
+      withStaticBoundaryFallback(
+        mergeCommunityAreaFallback({
+          communityAreaNumber: row.community_area_number,
+          name: row.name,
+          slug: row.slug,
+          lat: row.centroid_lat,
+          lng: row.centroid_lng,
+          descriptors: row.descriptors,
+          boundaryGeojson: row.boundary_geojson,
+        }),
+      ),
     );
 
     return NextResponse.json(

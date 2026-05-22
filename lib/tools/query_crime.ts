@@ -55,17 +55,25 @@ async function fromSupabase(neighborhood: string, month: number, year: number): 
   }
 }
 
+const NO_DATA: CrimeResult = {
+  total: 0, violent_count: 0, property_count: 0, by_type: {},
+  trend: 'No crime data available for this neighborhood. Do not estimate or fabricate figures.',
+}
+
 export async function queryCrime(neighborhood: string, month: number, year = 2024): Promise<CrimeResult> {
+  const key = neighborhood.toLowerCase().trim()
+
   if (hasSupabaseCredentials()) {
     try {
       const result = await fromSupabase(neighborhood, month, year)
       if (result) return result
+      // Supabase responded but has no row — signal the LLM honestly for non-demo neighborhoods
+      if (key !== 'hyde park') return NO_DATA
     } catch {
-      // fall through to stub
+      // Network/DB failure — fall through to stub
     }
   }
 
-  const key = neighborhood.toLowerCase().trim()
   if (key === 'hyde park') return HYDE_PARK_2024[month] ?? DEFAULT
   return { ...DEFAULT, trend: 'stub — real data pending' }
 }

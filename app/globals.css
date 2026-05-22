@@ -1,9 +1,8 @@
-@import 'mapbox-gl/dist/mapbox-gl.css';
 @import "tailwindcss";
 
 :root {
-  --background: #f7f0e3;
-  --background-strong: #e7dcc8;
+  --background: #f8f1e8;
+  --background-strong: #e9dfcf;
   --foreground: #263126;
   --muted: #69735f;
   --muted-strong: #4f5d49;
@@ -18,11 +17,12 @@
   --clay-50: #fbebe2;
   --accent: var(--terracotta);
   --accent-strong: #9f4a32;
-  --lake: var(--sage);
-  --lake-strong: #3f5738;
+  --lake: #6597b8;
+  --lake-strong: #315f78;
   --park: #5f8d55;
   --amber: #e7ad4e;
   --rail: #7a8f50;
+  --civic: #7f6fb2;
   --ink-soft: rgba(38, 49, 38, 0.72);
   --shadow: 0 18px 44px rgba(68, 58, 42, 0.12);
   --shadow-lg: 0 28px 80px rgba(68, 58, 42, 0.2);
@@ -37,7 +37,7 @@
 }
 
 html {
-  background: linear-gradient(135deg, #fff5e6 0%, #e7dcc8 54%, #dce8d4 100%);
+  background: linear-gradient(135deg, #fff7ec 0%, #e8dcc9 48%, #dce8eb 100%);
 }
 
 body {
@@ -83,6 +83,23 @@ input[type="range"] {
     linear-gradient(120deg, rgba(79, 111, 69, 0.94) 0%, rgba(111, 141, 95, 0.78) 41%, rgba(247, 240, 227, 0.97) 41.2%, rgba(247, 240, 227, 0.97) 100%);
 }
 
+.atlas-page-neighborhood {
+  background:
+    radial-gradient(circle at 12% 8%, rgba(231, 173, 78, 0.18), transparent 24%),
+    radial-gradient(circle at 88% 20%, rgba(101, 151, 184, 0.2), transparent 28%),
+    linear-gradient(180deg, #fbf4e8 0%, #f7f0e3 54%, #f0eadc 100%);
+}
+
+.atlas-page-neighborhood .atlas-topbar {
+  border-color: var(--panel-border);
+  background: rgba(255, 249, 238, 0.72);
+}
+
+.atlas-page-neighborhood .atlas-brand {
+  color: var(--foreground);
+  text-shadow: none;
+}
+
 .atlas-topbar {
   display: flex;
   min-height: 52px;
@@ -106,6 +123,7 @@ input[type="range"] {
   font-weight: 800;
   letter-spacing: 0.02em;
   text-shadow: 0 1px 2px rgba(38, 49, 38, 0.24);
+  white-space: nowrap;
 }
 
 .atlas-brand-mark {
@@ -212,6 +230,85 @@ input[type="range"] {
   background: rgba(111, 141, 95, 0.38);
 }
 
+.atlas-map-shell .leaflet-control-zoom {
+  overflow: hidden;
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius-md);
+  box-shadow: 0 12px 28px rgba(38, 49, 38, 0.18);
+}
+
+.atlas-map-shell .leaflet-control-zoom a {
+  width: 34px;
+  height: 34px;
+  border-bottom: 1px solid var(--panel-border);
+  background: rgba(255, 249, 238, 0.95);
+  color: var(--foreground);
+  font: 800 18px/34px "Avenir Next", "Segoe UI Rounded", system-ui, sans-serif;
+}
+
+.atlas-map-shell .leaflet-control-zoom a:last-child {
+  border-bottom: 0;
+}
+
+.atlas-map-shell .leaflet-control-zoom a:hover,
+.atlas-map-shell .leaflet-control-zoom a:focus {
+  background: var(--sage-100);
+  color: var(--sage-strong);
+}
+
+.community-area-label-marker {
+  background: transparent;
+  border: 0;
+  pointer-events: none;
+}
+
+.community-area-label-marker > div {
+  display: flex !important;
+  width: 98px !important;
+  max-width: 98px !important;
+  min-height: 20px !important;
+  align-items: center !important;
+  justify-content: center !important;
+  overflow: visible !important;
+  padding: 0 !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  color: rgba(38, 49, 38, 0.72) !important;
+  font-size: 9.5px !important;
+  font-weight: 850 !important;
+  line-height: 1.03 !important;
+  text-align: center !important;
+  text-overflow: clip !important;
+  text-shadow:
+    0 1px 0 rgba(255, 249, 238, 0.98),
+    1px 0 0 rgba(255, 249, 238, 0.92),
+    0 -1px 0 rgba(255, 249, 238, 0.86),
+    -1px 0 0 rgba(255, 249, 238, 0.86),
+    0 2px 5px rgba(38, 49, 38, 0.18) !important;
+  white-space: normal !important;
+  overflow-wrap: normal !important;
+  word-break: normal !important;
+}
+
+.community-area-label-marker > div[style*="#c76545"],
+.community-area-label-marker > div[style*="#4f6f45"],
+.community-area-label-marker > div[style*="#e7ad4e"],
+.community-area-label-marker > div[style*="199, 101, 69"],
+.community-area-label-marker > div[style*="79, 111, 69"],
+.community-area-label-marker > div[style*="231, 173, 78"] {
+  color: var(--foreground) !important;
+  font-size: 10px !important;
+  opacity: 0.98 !important;
+  text-shadow:
+    0 1px 0 rgba(255, 249, 238, 1),
+    1px 0 0 rgba(255, 249, 238, 0.96),
+    0 -1px 0 rgba(255, 249, 238, 0.94),
+    -1px 0 0 rgba(255, 249, 238, 0.94),
+    0 3px 7px rgba(38, 49, 38, 0.22) !important;
+}
+
 @keyframes cloudDrift {
   0%, 100% { transform: translateX(0); }
   50%       { transform: translateX(8px); }
@@ -219,4 +316,21 @@ input[type="range"] {
 
 .sky-cloud {
   animation: cloudDrift 60s ease-in-out infinite;
+}
+
+@media (max-width: 520px) {
+  .atlas-topbar {
+    gap: 8px;
+    padding: 7px;
+  }
+
+  .atlas-brand {
+    gap: 7px;
+    font-size: 12px;
+  }
+
+  .atlas-brand-mark {
+    width: 10px;
+    height: 20px;
+  }
 }

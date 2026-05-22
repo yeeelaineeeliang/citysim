@@ -2,8 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import {
   jsonError,
   RATE_LIMITS,
-  rateLimitRequest,
-  requireApiUser,
+  rateLimitPublicRequest,
   validateGeocodeQuery,
 } from "@/lib/apiSecurity";
 
@@ -40,10 +39,7 @@ function formatDisplayName(p: PhotonFeature["properties"]): string {
 }
 
 export async function GET(req: NextRequest) {
-  const authResult = await requireApiUser();
-  if (!authResult.ok) return authResult.response;
-
-  const rateLimited = rateLimitRequest(req, authResult.userId, RATE_LIMITS.lookup);
+  const rateLimited = await rateLimitPublicRequest(req, RATE_LIMITS.lookup);
   if (rateLimited) return rateLimited;
 
   const validated = validateGeocodeQuery(req.nextUrl.searchParams.get("q"));
@@ -64,7 +60,6 @@ export async function GET(req: NextRequest) {
 
   const res = await fetch(url.toString(), {
     headers: { "Accept-Language": "en" },
-    next: { revalidate: 3600 },
   });
 
   if (!res.ok) return NextResponse.json({ suggestions: [] });

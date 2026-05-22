@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { ClerkProvider } from "@clerk/nextjs";
+import "mapbox-gl/dist/mapbox-gl.css";
 import "leaflet/dist/leaflet.css";
 import "./globals.css";
 

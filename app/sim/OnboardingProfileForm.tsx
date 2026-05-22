@@ -1,6 +1,16 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import {
+  ArrowLeft,
+  ArrowRight,
+  CheckCircle2,
+  DollarSign,
+  MapPin,
+  ShieldCheck,
+  Sparkles,
+  TrainFront,
+} from "lucide-react";
 import type { UserProfile } from "@/lib/tools/types";
 import type { GeocodeSuggestion } from "@/app/api/geocode/route";
 
@@ -65,6 +75,12 @@ const LIFESTYLE_OPTIONS = [
   "Short commute",
 ];
 
+const FORM_STEPS = [
+  { id: "basics", label: "Profile", title: "Budget, anchor, commute" },
+  { id: "priorities", label: "Priorities", title: "What should win" },
+  { id: "review", label: "Preview", title: "Review your fit signals" },
+] as const;
+
 type PrioritySliders = Record<(typeof PRIORITY_KEYS)[number], number>;
 
 const DEFAULT_PRIORITIES: PrioritySliders = {
@@ -101,6 +117,7 @@ export function OnboardingProfileForm({ onComplete, submitLabel = "Start simulat
   const [priorities, setPriorities] = useState<PrioritySliders>(DEFAULT_PRIORITIES);
   const [lifestyle, setLifestyle] = useState<string[]>([]);
   const [notes, setNotes] = useState("");
+  const [activeStep, setActiveStep] = useState(0);
 
   useEffect(() => {
     const saved = loadSaved();
@@ -149,6 +166,10 @@ export function OnboardingProfileForm({ onComplete, submitLabel = "Start simulat
 
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
+    if (activeStep < FORM_STEPS.length - 1) {
+      setActiveStep((step) => Math.min(FORM_STEPS.length - 1, step + 1));
+      return;
+    }
     const resolvedWorkplaceCoords = await resolveWorkplaceCoords();
     if (resolvedWorkplaceCoords) setWorkplaceCoords(resolvedWorkplaceCoords);
     try {
@@ -172,6 +193,7 @@ export function OnboardingProfileForm({ onComplete, submitLabel = "Start simulat
       : {};
     onComplete({
       budgetRange: budgetToRange(budget),
+      monthlyBudget: budget,
       workplace: workplace.trim() || "not specified",
       ...workplaceLocation,
       commutePref,
@@ -190,186 +212,284 @@ export function OnboardingProfileForm({ onComplete, submitLabel = "Start simulat
   const sortedPriorities = [...PRIORITY_KEYS].sort((a, b) => priorities[b] - priorities[a]);
   const topPriority = sortedPriorities[0];
   const selectedLifestyle = lifestyle.slice(0, 4);
+  const stepId = FORM_STEPS[activeStep]?.id ?? "basics";
+  const isFirstStep = activeStep === 0;
+  const isLastStep = activeStep === FORM_STEPS.length - 1;
 
   return (
-    <form onSubmit={handleSubmit} className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_300px]">
+    <form onSubmit={handleSubmit} className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_310px]">
       <div className="grid gap-5">
-        <fieldset className="atlas-card grid gap-4 p-4">
-          <div className="flex items-end justify-between gap-4">
-            <legend className="text-sm font-extrabold text-[color:var(--foreground)]">Monthly rent budget</legend>
-            <p className="rounded-[var(--radius-sm)] bg-[color:var(--sage-100)] px-2.5 py-1 text-sm font-bold text-[color:var(--sage-strong)]">
-              ${budget.toLocaleString()}
-            </p>
-          </div>
-          <input
-            aria-label="Monthly rent budget slider"
-            type="range"
-            min={MIN_BUDGET}
-            max={MAX_BUDGET}
-            step={STEP}
-            value={budget}
-            onChange={(e) => setBudget(Number(e.target.value))}
-            className="w-full"
-          />
-          <div className="flex justify-between text-xs font-semibold text-[color:var(--muted)]">
-            <span>${MIN_BUDGET.toLocaleString()}</span>
-            <span>${MAX_BUDGET.toLocaleString()}+</span>
-          </div>
-        </fieldset>
-
-        <div className="atlas-card grid gap-2 p-4 text-sm font-bold">
-          <div className="flex items-center justify-between gap-3">
-            <label htmlFor="workplace-input">Workplace or school</label>
-            {workplaceCoords && (
-              <span className="rounded-[var(--radius-sm)] bg-[rgba(44,122,82,0.12)] px-2 py-1 text-xs font-bold text-[color:var(--park)]">
-                pinned
-              </span>
-            )}
-          </div>
-          <div className="relative">
-            <input
-              id="workplace-input"
-              ref={workplaceRef}
-              name="workplace"
-              type="text"
-              value={workplace}
-              onChange={(e) => {
-                setWorkplace(e.target.value);
-                setWorkplaceCoords(null);
-                setShowSuggestions(true);
-              }}
-              onFocus={() => setShowSuggestions(true)}
-              onBlur={() => setTimeout(() => setShowSuggestions(false), 150)}
-              placeholder="Search any address, school, or workplace"
-              autoComplete="off"
-              className="atlas-input w-full px-4 py-3 font-normal"
-            />
-            {geocoding && (
-              <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-semibold text-[color:var(--muted)]">
-                searching
-              </span>
-            )}
-            {showSuggestions && suggestions.length > 0 && (
-              <ul className="atlas-scrollbar absolute z-20 mt-1 max-h-56 w-full overflow-y-auto rounded-[var(--radius-md)] border border-[color:var(--panel-border)] bg-white shadow-lg">
-                {suggestions.map((s) => (
-                  <li key={`${s.lat},${s.lng}`}>
-                    <button
-                      type="button"
-                      onMouseDown={(e) => {
-                        e.preventDefault();
-                        const label = s.displayName.split(",").slice(0, 2).join(", ");
-                        setWorkplace(label);
-                        setWorkplaceCoords({ lat: s.lat, lng: s.lng });
-                        setSuggestions([]);
-                        setShowSuggestions(false);
-                        workplaceRef.current?.blur();
-                      }}
-                      className="w-full px-4 py-2.5 text-left text-sm font-normal leading-snug hover:bg-[color:var(--panel-solid)]"
-                    >
-                      <span className="block font-semibold">{s.displayName.split(",").slice(0, 2).join(", ")}</span>
-                      <span className="block text-xs text-[color:var(--muted)]">
-                        {s.displayName.split(",").slice(2, 4).join(",")}
-                      </span>
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            )}
+        <div className="rounded-[var(--radius-md)] border border-[color:var(--panel-border)] bg-white/62 p-2">
+          <div className="grid gap-2 sm:grid-cols-3">
+            {FORM_STEPS.map((item, index) => {
+              const active = index === activeStep;
+              const complete = index < activeStep;
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => setActiveStep(index)}
+                  className={`flex items-center gap-3 rounded-[var(--radius-sm)] px-3 py-3 text-left transition ${
+                    active
+                      ? "bg-[color:var(--foreground)] text-white shadow-sm"
+                      : complete
+                        ? "bg-[color:var(--sage-100)] text-[color:var(--sage-strong)]"
+                        : "text-[color:var(--muted-strong)] hover:bg-white"
+                  }`}
+                >
+                  <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-white/72 text-xs font-extrabold text-[color:var(--foreground)]">
+                    {complete ? <CheckCircle2 size={15} /> : index + 1}
+                  </span>
+                  <span className="min-w-0">
+                    <span className="block text-xs font-extrabold">{item.label}</span>
+                    <span className="block truncate text-[11px] font-semibold opacity-75">{item.title}</span>
+                  </span>
+                </button>
+              );
+            })}
           </div>
         </div>
 
-        <fieldset className="atlas-card grid gap-3 p-4">
-          <legend className="text-sm font-extrabold">Commute preference</legend>
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-            {COMMUTE_OPTIONS.map(({ value, label }) => (
-              <label
-                key={value}
-                className={`cursor-pointer rounded-[var(--radius-md)] border px-3 py-2 text-center text-sm font-bold transition ${
-                  commutePref === value
-                    ? "border-[color:var(--sage)] bg-[color:var(--sage)] text-white shadow-sm"
-                    : "border-[color:var(--panel-border)] bg-white/72 text-[color:var(--muted-strong)] hover:border-[color:var(--sage)]"
-                }`}
-              >
+        {stepId === "basics" && (
+          <section className="grid gap-4">
+            <fieldset className="grid gap-4 rounded-[var(--radius-md)] border border-[color:var(--panel-border)] bg-white/72 p-4">
+              <div className="flex items-center justify-between gap-4">
+                <legend className="flex items-center gap-2 text-sm font-extrabold text-[color:var(--foreground)]">
+                  <DollarSign size={17} /> Monthly rent budget
+                </legend>
+                <p className="rounded-[var(--radius-sm)] bg-[color:var(--sage-100)] px-2.5 py-1 text-sm font-bold text-[color:var(--sage-strong)]">
+                  ${budget.toLocaleString()}
+                </p>
+              </div>
+              <input
+                aria-label="Monthly rent budget slider"
+                type="range"
+                min={MIN_BUDGET}
+                max={MAX_BUDGET}
+                step={STEP}
+                value={budget}
+                onChange={(e) => setBudget(Number(e.target.value))}
+                className="w-full"
+              />
+              <div className="flex justify-between text-xs font-semibold text-[color:var(--muted)]">
+                <span>${MIN_BUDGET.toLocaleString()}</span>
+                <span>${MAX_BUDGET.toLocaleString()}+</span>
+              </div>
+            </fieldset>
+
+            <div className="grid gap-2 rounded-[var(--radius-md)] border border-[color:var(--panel-border)] bg-white/72 p-4 text-sm font-bold">
+              <div className="flex items-center justify-between gap-3">
+                <label htmlFor="workplace-input" className="flex items-center gap-2">
+                  <MapPin size={17} /> Workplace or school
+                </label>
+                {workplaceCoords && (
+                  <span className="rounded-[var(--radius-sm)] bg-[rgba(44,122,82,0.12)] px-2 py-1 text-xs font-bold text-[color:var(--park)]">
+                    pinned
+                  </span>
+                )}
+              </div>
+              <div className="relative">
                 <input
-                  type="radio"
-                  name="commutePref"
-                  value={value}
-                  checked={commutePref === value}
-                  onChange={() => setCommutePref(value)}
-                  className="sr-only"
+                  id="workplace-input"
+                  ref={workplaceRef}
+                  name="workplace"
+                  type="text"
+                  value={workplace}
+                  onChange={(e) => {
+                    setWorkplace(e.target.value);
+                    setWorkplaceCoords(null);
+                    setShowSuggestions(true);
+                  }}
+                  onFocus={() => setShowSuggestions(true)}
+                  onBlur={() => setTimeout(() => setShowSuggestions(false), 150)}
+                  placeholder="Search any address, school, or workplace"
+                  autoComplete="off"
+                  className="atlas-input w-full px-4 py-3 font-normal"
                 />
-                {label}
-              </label>
-            ))}
-          </div>
-        </fieldset>
+                {geocoding && (
+                  <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-semibold text-[color:var(--muted)]">
+                    searching
+                  </span>
+                )}
+                {showSuggestions && suggestions.length > 0 && (
+                  <ul className="atlas-scrollbar absolute z-20 mt-1 max-h-56 w-full overflow-y-auto rounded-[var(--radius-md)] border border-[color:var(--panel-border)] bg-white shadow-lg">
+                    {suggestions.map((s) => (
+                      <li key={`${s.lat},${s.lng}`}>
+                        <button
+                          type="button"
+                          onMouseDown={(e) => {
+                            e.preventDefault();
+                            const label = s.displayName.split(",").slice(0, 2).join(", ");
+                            setWorkplace(label);
+                            setWorkplaceCoords({ lat: s.lat, lng: s.lng });
+                            setSuggestions([]);
+                            setShowSuggestions(false);
+                            workplaceRef.current?.blur();
+                          }}
+                          className="w-full px-4 py-2.5 text-left text-sm font-normal leading-snug hover:bg-[color:var(--panel-solid)]"
+                        >
+                          <span className="block font-semibold">{s.displayName.split(",").slice(0, 2).join(", ")}</span>
+                          <span className="block text-xs text-[color:var(--muted)]">
+                            {s.displayName.split(",").slice(2, 4).join(",")}
+                          </span>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            </div>
 
-        <fieldset className="atlas-card grid gap-3 p-4">
-          <legend className="text-sm font-extrabold">Priority weights</legend>
-          <div className="grid gap-3">
-            {PRIORITY_KEYS.map((key) => (
-              <label key={key} className="grid gap-1.5">
-                <span className="flex items-center justify-between gap-3 text-sm">
-                  <span className="font-bold text-[color:var(--muted-strong)]">{PRIORITY_LABELS[key]}</span>
-                  <span className="text-xs font-bold uppercase text-[color:var(--muted)]">{priorityLabel(priorities[key])}</span>
-                </span>
-                <input
-                  type="range"
-                  min={1}
-                  max={5}
-                  value={priorities[key]}
-                  onChange={(e) =>
-                    setPriorities((prev) => ({ ...prev, [key]: Number(e.target.value) }))
-                  }
-                  className="w-full"
-                />
-              </label>
-            ))}
-          </div>
-        </fieldset>
+            <fieldset className="grid gap-3 rounded-[var(--radius-md)] border border-[color:var(--panel-border)] bg-white/72 p-4">
+              <legend className="flex items-center gap-2 text-sm font-extrabold">
+                <TrainFront size={17} /> Commute preference
+              </legend>
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                {COMMUTE_OPTIONS.map(({ value, label }) => (
+                  <label
+                    key={value}
+                    className={`cursor-pointer rounded-[var(--radius-md)] border px-3 py-2 text-center text-sm font-bold transition ${
+                      commutePref === value
+                        ? "border-[color:var(--lake-strong)] bg-[color:var(--lake-strong)] text-white shadow-sm"
+                        : "border-[color:var(--panel-border)] bg-white/72 text-[color:var(--muted-strong)] hover:border-[color:var(--lake)]"
+                    }`}
+                  >
+                    <input
+                      type="radio"
+                      name="commutePref"
+                      value={value}
+                      checked={commutePref === value}
+                      onChange={() => setCommutePref(value)}
+                      className="sr-only"
+                    />
+                    {label}
+                  </label>
+                ))}
+              </div>
+            </fieldset>
+          </section>
+        )}
 
-        <fieldset className="atlas-card grid gap-3 p-4">
-          <legend className="text-sm font-extrabold">Lifestyle preferences</legend>
-          <div className="flex flex-wrap gap-2">
-            {LIFESTYLE_OPTIONS.map((opt) => (
-              <button
-                key={opt}
-                type="button"
-                onClick={() => toggleLifestyle(opt)}
-                className={`rounded-[var(--radius-sm)] border px-3 py-2 text-xs font-bold transition-colors ${
-                  lifestyle.includes(opt)
-                    ? "border-[color:var(--accent)] bg-[color:var(--accent)] text-white"
-                    : "border-[color:var(--panel-border)] bg-white text-[color:var(--muted-strong)] hover:border-[color:var(--accent)]"
-                }`}
-              >
-                {opt}
-              </button>
-            ))}
-          </div>
-        </fieldset>
+        {stepId === "priorities" && (
+          <section className="grid gap-4">
+            <fieldset className="grid gap-3 rounded-[var(--radius-md)] border border-[color:var(--panel-border)] bg-white/72 p-4">
+              <legend className="flex items-center gap-2 text-sm font-extrabold">
+                <ShieldCheck size={17} /> Priority weights
+              </legend>
+              <div className="grid gap-3">
+                {PRIORITY_KEYS.map((key) => (
+                  <label key={key} className="grid gap-1.5">
+                    <span className="flex items-center justify-between gap-3 text-sm">
+                      <span className="font-bold text-[color:var(--muted-strong)]">{PRIORITY_LABELS[key]}</span>
+                      <span className="text-xs font-bold uppercase text-[color:var(--muted)]">{priorityLabel(priorities[key])}</span>
+                    </span>
+                    <input
+                      type="range"
+                      min={1}
+                      max={5}
+                      value={priorities[key]}
+                      onChange={(e) =>
+                        setPriorities((prev) => ({ ...prev, [key]: Number(e.target.value) }))
+                      }
+                      className="w-full"
+                    />
+                  </label>
+                ))}
+              </div>
+            </fieldset>
 
-        <label className="atlas-card grid gap-2 p-4 text-sm font-bold">
-          Anything else?
-          <textarea
-            name="notes"
-            rows={3}
-            value={notes}
-            onChange={(e) => setNotes(e.target.value)}
-            placeholder="Near the Red Line, weekend parking, a dog-friendly block"
-            className="atlas-input resize-none px-4 py-3 font-normal"
-          />
-        </label>
+            <fieldset className="grid gap-3 rounded-[var(--radius-md)] border border-[color:var(--panel-border)] bg-white/72 p-4">
+              <legend className="flex items-center gap-2 text-sm font-extrabold">
+                <Sparkles size={17} /> Lifestyle preferences
+              </legend>
+              <div className="flex flex-wrap gap-2">
+                {LIFESTYLE_OPTIONS.map((opt) => (
+                  <button
+                    key={opt}
+                    type="button"
+                    onClick={() => toggleLifestyle(opt)}
+                    className={`rounded-[var(--radius-sm)] border px-3 py-2 text-xs font-bold transition-colors ${
+                      lifestyle.includes(opt)
+                        ? "border-[color:var(--accent)] bg-[color:var(--accent)] text-white"
+                        : "border-[color:var(--panel-border)] bg-white text-[color:var(--muted-strong)] hover:border-[color:var(--accent)]"
+                    }`}
+                  >
+                    {opt}
+                  </button>
+                ))}
+              </div>
+            </fieldset>
+          </section>
+        )}
+
+        {stepId === "review" && (
+          <section className="grid gap-4">
+            <div className="grid gap-3 rounded-[var(--radius-md)] border border-[color:var(--panel-border)] bg-white/72 p-4">
+              <p className="text-sm font-extrabold">Journey preview</p>
+              <div className="grid gap-3 sm:grid-cols-3">
+                <div className="rounded-[var(--radius-sm)] bg-[color:var(--sage-100)] p-3">
+                  <p className="text-xs font-bold text-[color:var(--muted)]">Budget</p>
+                  <p className="mt-1 text-lg font-extrabold">${budget.toLocaleString()}</p>
+                </div>
+                <div className="rounded-[var(--radius-sm)] bg-[rgba(101,151,184,0.14)] p-3">
+                  <p className="text-xs font-bold text-[color:var(--muted)]">Commute</p>
+                  <p className="mt-1 text-lg font-extrabold capitalize">{commutePref}</p>
+                </div>
+                <div className="rounded-[var(--radius-sm)] bg-[rgba(199,101,69,0.12)] p-3">
+                  <p className="text-xs font-bold text-[color:var(--muted)]">Top priority</p>
+                  <p className="mt-1 text-lg font-extrabold">{PRIORITY_LABELS[topPriority]}</p>
+                </div>
+              </div>
+            </div>
+
+            <label className="grid gap-2 rounded-[var(--radius-md)] border border-[color:var(--panel-border)] bg-white/72 p-4 text-sm font-bold">
+              Anything else?
+              <textarea
+                name="notes"
+                rows={4}
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
+                placeholder="Near the Red Line, weekend parking, a dog-friendly block"
+                className="atlas-input resize-none px-4 py-3 font-normal"
+              />
+            </label>
+          </section>
+        )}
+
+        <div className="flex flex-col-reverse gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <button
+            type="button"
+            disabled={isFirstStep}
+            onClick={() => setActiveStep((step) => Math.max(0, step - 1))}
+            className="atlas-button-secondary gap-2 disabled:opacity-40"
+          >
+            <ArrowLeft size={16} /> Back
+          </button>
+          {isLastStep ? (
+            <button type="submit" className="atlas-button-primary gap-2">
+              {submitLabel} <ArrowRight size={16} />
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setActiveStep((step) => Math.min(FORM_STEPS.length - 1, step + 1))}
+              className="atlas-button-primary gap-2"
+            >
+              Continue <ArrowRight size={16} />
+            </button>
+          )}
+        </div>
       </div>
 
-      <aside className="atlas-card grid content-between gap-6 p-5">
+      <aside className="grid content-between gap-6 rounded-[var(--radius-md)] border border-[color:var(--panel-border)] bg-[rgba(255,252,246,0.9)] p-5">
         <div className="grid gap-5">
           <div>
-            <p className="atlas-kicker text-[color:var(--muted)]">Profile preview</p>
+            <p className="atlas-kicker text-[color:var(--muted)]">Fit preview</p>
             <p className="mt-2 text-3xl font-semibold text-[color:var(--foreground)]">
-              {budgetToRange(budget)}
+              ${budget.toLocaleString()}
             </p>
             <p className="mt-1 text-sm font-semibold text-[color:var(--muted)]">
-              {commutePref[0].toUpperCase() + commutePref.slice(1)} commute
+              {budgetToRange(budget)} · {commutePref[0].toUpperCase() + commutePref.slice(1)} commute
             </p>
           </div>
 
@@ -389,7 +509,7 @@ export function OnboardingProfileForm({ onComplete, submitLabel = "Start simulat
           </div>
 
           <div className="grid gap-2">
-            <p className="text-xs font-extrabold uppercase tracking-[0.14em] text-[color:var(--muted)]">Pinned place</p>
+            <p className="text-xs font-extrabold uppercase tracking-[0.14em] text-[color:var(--muted)]">Anchor</p>
             <p className="min-h-12 rounded-[var(--radius-md)] border border-[color:var(--panel-border)] bg-white/72 px-3 py-2 text-sm font-semibold text-[color:var(--muted-strong)]">
               {workplace.trim() || "Workplace not set yet"}
             </p>
@@ -397,16 +517,16 @@ export function OnboardingProfileForm({ onComplete, submitLabel = "Start simulat
 
           <div className="flex flex-wrap gap-2">
             {(selectedLifestyle.length ? selectedLifestyle : ["Parks", "Transit", "Grocery"]).map((tag) => (
-              <span key={tag} className="rounded-[var(--radius-sm)] bg-[rgba(183,78,53,0.1)] px-2.5 py-1.5 text-xs font-bold text-[color:var(--accent-strong)]">
+              <span key={tag} className="rounded-[var(--radius-sm)] bg-[rgba(199,101,69,0.1)] px-2.5 py-1.5 text-xs font-bold text-[color:var(--accent-strong)]">
                 {tag}
               </span>
             ))}
           </div>
         </div>
 
-        <button type="submit" className="atlas-button-primary w-full">
-          {submitLabel}
-        </button>
+        <p className="rounded-[var(--radius-md)] bg-[rgba(101,151,184,0.13)] px-3 py-2 text-xs font-bold leading-5 text-[color:var(--lake-strong)]">
+          You can compare neighborhoods before creating an account.
+        </p>
       </aside>
     </form>
   );

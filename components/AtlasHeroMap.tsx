@@ -23,6 +23,19 @@ const lakePath: [number, number][] = [
   [41.70, -87.53],
 ];
 
+function clamp(min: number, max: number, value: number) {
+  return Math.min(max, Math.max(min, value));
+}
+
+function blockPosition(item: { lat: number; lng: number }) {
+  const x = (item.lng + 87.91) / 0.39;
+  const y = (42.04 - item.lat) / 0.42;
+  return {
+    left: `${clamp(50, 86, 50 + x * 36)}%`,
+    top: `${clamp(16, 74, 16 + y * 58)}%`,
+  };
+}
+
 export function AtlasHeroMap() {
   const featured = NEIGHBORHOOD_COORDINATES.filter((item) => FEATURED.has(item.name));
 
@@ -42,7 +55,7 @@ export function AtlasHeroMap() {
       >
         <TileLayer
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-          opacity={0.34}
+          opacity={0.5}
         />
         <Polyline
           positions={lakePath}
@@ -67,8 +80,28 @@ export function AtlasHeroMap() {
           </CircleMarker>
         ))}
       </MapContainer>
-      <div className="absolute inset-0 bg-[linear-gradient(90deg,rgba(79,111,69,0.92)_0%,rgba(79,111,69,0.72)_37%,rgba(79,111,69,0.22)_72%,rgba(247,240,227,0.16)_100%)]" />
-      <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(38,49,38,0.14)_0%,rgba(38,49,38,0.42)_100%)]" />
+      <div className="absolute inset-0 bg-[linear-gradient(90deg,rgba(79,111,69,0.86)_0%,rgba(79,111,69,0.56)_38%,rgba(79,111,69,0.08)_72%,rgba(247,240,227,0.08)_100%)]" />
+      <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(38,49,38,0.1)_0%,rgba(38,49,38,0.32)_100%)]" />
+      <div className="pointer-events-none absolute inset-0 hidden sm:block">
+        {featured.map((item, index) => (
+          <div
+            key={`hero-block-${item.communityAreaNumber}`}
+            className="absolute rounded-[var(--radius-md)] border border-white/28 bg-white/12 shadow-[0_12px_30px_rgba(38,49,38,0.12)] backdrop-blur-[1px]"
+            style={{
+              ...blockPosition(item),
+              width: index === 7 ? "118px" : "88px",
+              height: index === 7 ? "64px" : "48px",
+              backgroundColor: index === 7 ? "rgba(199,101,69,0.55)" : "rgba(255,249,238,0.15)",
+            }}
+          >
+            {index === 7 && (
+              <span className="absolute left-3 top-3 text-xs font-bold text-white drop-shadow">
+                Hyde Park
+              </span>
+            )}
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

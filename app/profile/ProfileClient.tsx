@@ -26,7 +26,7 @@ export function ProfileClient() {
         </header>
 
         <section className="grid gap-6 lg:grid-cols-[minmax(0,0.78fr)_minmax(420px,1fr)] lg:items-start">
-          <div className="min-h-[320px] overflow-hidden rounded-[var(--radius-xl)] border border-white/15 bg-[linear-gradient(145deg,rgba(5,32,48,0.92),rgba(19,89,120,0.78))] p-7 text-white shadow-[var(--shadow-lg)]">
+          <div className="min-h-[320px] overflow-hidden rounded-[var(--radius-xl)] border border-white/15 bg-[linear-gradient(145deg,rgba(79,111,69,0.94),rgba(199,101,69,0.7))] p-7 text-white shadow-[var(--shadow-lg)]">
             <div className="flex h-full min-h-[280px] flex-col justify-between">
               <div>
                 <p className="atlas-kicker text-white/62">Living profile</p>

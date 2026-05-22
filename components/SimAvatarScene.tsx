@@ -7,8 +7,8 @@ import "leaflet/dist/leaflet.css"
 import { straightLineCoords } from "@/lib/decodePolyline"
 import type { DayEvent } from "@/lib/dailySchedule"
 
-const DARK_TILES = "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
-const DARK_ATTR =
+const LIGHT_TILES = "https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png"
+const LIGHT_ATTR =
   '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'
 
 interface Props {
@@ -23,6 +23,7 @@ interface Props {
   onEventChange?: (event: DayEvent) => void
   neighborhoodName?: string
   workplaceName?: string
+  compact?: boolean
 }
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -121,6 +122,15 @@ function FitSchedule({ coords }: { coords: [number, number][] }) {
   return null
 }
 
+// ── Seasonal tint ─────────────────────────────────────────────────────────────
+
+function seasonalTint(month: number): string | null {
+  if (month === 12 || month <= 2) return 'rgba(170,205,240,0.09)'
+  if (month === 3 || month === 4 || month === 11) return 'rgba(195,220,195,0.07)'
+  if (month >= 6 && month <= 8) return 'rgba(255,225,170,0.08)'
+  return null
+}
+
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export function SimAvatarScene({
@@ -129,11 +139,13 @@ export function SimAvatarScene({
   workplaceCoords,
   routeCoords,
   isAnimating,
+  month: simMonth,
   schedule,
   commuteRouteCoords = [],
   onEventChange,
   neighborhoodName,
   workplaceName,
+  compact = false,
 }: Props) {
   // ── Frame-based animation ─────────────────────────────────────────────────
   const [frameIdx, setFrameIdx] = useState(0)
@@ -296,7 +308,7 @@ export function SimAvatarScene({
         zoomControl={false}
         attributionControl={false}
       >
-        <TileLayer url={DARK_TILES} attribution={DARK_ATTR} />
+        <TileLayer url={LIGHT_TILES} attribution={LIGHT_ATTR} />
 
         {/* Fit map to schedule bounds once on load */}
         {scheduleBounds.length >= 2 && <FitSchedule coords={scheduleBounds} />}
@@ -305,7 +317,7 @@ export function SimAvatarScene({
         {dayRouteCoords.length >= 3 && (
           <Polyline
             positions={dayRouteCoords}
-            pathOptions={{ color: "#9e7fd4", weight: 1.5, opacity: 0.35, dashArray: "3 8" }}
+            pathOptions={{ color: "#7c5cbf", weight: 1.5, opacity: 0.55, dashArray: "3 8" }}
           />
         )}
 
@@ -313,7 +325,7 @@ export function SimAvatarScene({
         {displayRoute.length >= 2 && (
           <Polyline
             positions={displayRoute}
-            pathOptions={{ color: "#3a7bd5", weight: 2.5, opacity: 0.5, dashArray: "6 4" }}
+            pathOptions={{ color: "#1a5fb5", weight: 2.5, opacity: 0.65, dashArray: "6 4" }}
           />
         )}
 
@@ -360,7 +372,7 @@ export function SimAvatarScene({
                 weight: isActive ? 2 : 1,
               }}
             >
-              <Tooltip permanent direction="top" offset={[0, -8]}>
+              <Tooltip permanent={evt === currentEvent} direction="top" offset={[0, -8]}>
                 <span style={{ fontSize: 10, fontWeight: 700 }}>
                   {evt.timeLabel} · {evt.activityLabel}
                 </span>
@@ -375,8 +387,20 @@ export function SimAvatarScene({
         )}
       </MapContainer>
 
+      {/* Seasonal color tint overlay */}
+      {seasonalTint(simMonth) && (
+        <div
+          style={{
+            position: 'absolute', inset: 0,
+            background: seasonalTint(simMonth)!,
+            pointerEvents: 'none',
+            zIndex: 400,
+          }}
+        />
+      )}
+
       {/* ── Mini-map inset (city overview) ───────────────────────────────── */}
-      <div
+      {!compact && <div
         data-testid="mini-map"
         style={{
           position: "absolute",
@@ -403,7 +427,7 @@ export function SimAvatarScene({
           keyboard={false}
           attributionControl={false}
         >
-          <TileLayer url={DARK_TILES} />
+          <TileLayer url={LIGHT_TILES} />
           <CircleMarker
             center={mapCenter}
             radius={5}
@@ -435,7 +459,7 @@ export function SimAvatarScene({
         >
           Neighborhood
         </div>
-      </div>
+      </div>}
     </div>
   )
 }

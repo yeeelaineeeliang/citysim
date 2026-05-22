@@ -14,11 +14,28 @@ interface Props {
   readonly lat: number
   readonly lng: number
   readonly month: number
+  readonly hourOfDay?: number
   readonly targetHeading?: number
   readonly enableDrift?: boolean
 }
 
-export function StreetViewPanorama({ lat, lng, month, targetHeading = 0, enableDrift = false }: Props) {
+function timeOfDayStyle(hour: number, month: number): { background: string; opacity: number } | null {
+  const isWinter = month === 12 || month <= 2
+  const isSummer = month >= 6 && month <= 8
+
+  if (hour >= 22 || hour < 5)  return { background: 'rgb(5,10,30)',    opacity: 0.72 }
+  if (hour < 7)                return { background: 'rgb(20,35,80)',   opacity: 0.48 }
+  if (hour < 9)                return { background: isWinter ? 'rgb(30,50,110)' : 'rgb(80,110,170)', opacity: isWinter ? 0.32 : 0.12 }
+  if (hour < 17) {
+    if (isWinter) return { background: 'rgb(160,185,220)', opacity: 0.10 }
+    if (isSummer) return { background: 'rgb(255,220,150)', opacity: 0.07 }
+    return null
+  }
+  if (hour < 20)               return { background: 'rgb(200,110,35)',  opacity: 0.22 }
+  return                              { background: 'rgb(30,18,50)',    opacity: 0.42 }
+}
+
+export function StreetViewPanorama({ lat, lng, month, hourOfDay = 12, targetHeading = 0, enableDrift = false }: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
   const panoramaRef = useRef<google.maps.StreetViewPanorama | null>(null)
   const headingRef = useRef(0)
@@ -33,12 +50,17 @@ export function StreetViewPanorama({ lat, lng, month, targetHeading = 0, enableD
   }, [targetHeading])
 
   useEffect(() => {
+    // If panorama already mounted, smooth position update — no remount
+    if (panoramaRef.current) {
+      panoramaRef.current.setPosition({ lat, lng })
+      return
+    }
+
     if (!containerRef.current) return
 
     let cancelled = false
     setReady(false)
     setNoImagery(false)
-    panoramaRef.current = null
     headingRef.current = 0
 
     importLibrary("streetView")
@@ -84,9 +106,15 @@ export function StreetViewPanorama({ lat, lng, month, targetHeading = 0, enableD
 
     return () => {
       cancelled = true
-      panoramaRef.current = null
     }
   }, [lat, lng])
+
+  // Null the panorama ref only on unmount, not on lat/lng changes
+  useEffect(() => {
+    return () => {
+      panoramaRef.current = null
+    }
+  }, [])
 
   // Heading drift + smooth interpolation toward targetHeading — opt-in only
   useEffect(() => {
@@ -121,6 +149,20 @@ export function StreetViewPanorama({ lat, lng, month, targetHeading = 0, enableD
         className="absolute inset-0"
         style={{ opacity: ready ? 1 : 0, transition: "opacity 0.4s" }}
       />
+      {(() => {
+        const style = timeOfDayStyle(hourOfDay, month)
+        return style ? (
+          <div
+            style={{
+              position: 'absolute', inset: 0, zIndex: 10,
+              background: style.background,
+              opacity: style.opacity,
+              pointerEvents: 'none',
+              transition: 'background 2s ease, opacity 2s ease',
+            }}
+          />
+        ) : null
+      })()}
       {!ready && (
         <div className="absolute inset-0">
           <Skybox month={month} crimeSignal={0} serviceSignal={null} transitSignal={0} fullBleed showElements />

@@ -46,6 +46,7 @@ type MapboxMap = {
   setPaintProperty: (id: string, prop: string, val: unknown) => void
   setFog: (fog: unknown) => void
   setBearing: (b: number) => void
+  flyTo: (opts: object) => void
   resize: () => void
   remove: () => void
 }
@@ -58,10 +59,12 @@ export function CityViewScene({ lat, lng, month: _month, timeProgress, mapAction
   const dashRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const dashTickRef = useRef(0)
   const [mapLoaded, setMapLoaded] = useState(false)
+  // Capture initial center so the map is only created once (subsequent moves use flyTo)
+  const initCenterRef = useRef<[number, number]>([lng, lat])
 
   const token = process.env.NEXT_PUBLIC_MAPBOX_TOKEN
 
-  // ── Map initialisation ──────────────────────────────────────────────────────
+  // ── Map initialisation — runs once per token ────────────────────────────────
   useEffect(() => {
     if (!containerRef.current || !token) return
     let cancelled = false
@@ -80,9 +83,9 @@ export function CityViewScene({ lat, lng, month: _month, timeProgress, mapAction
       const map = new mapboxgl.Map({
         container: containerRef.current,
         style: 'mapbox://styles/mapbox/dark-v11',
-        center: [lng, lat],
-        zoom: 14,        // close enough to see individual buildings clearly
-        pitch: 28,       // low angle — city fills the frame, minimal sky
+        center: initCenterRef.current,
+        zoom: 15.5,      // street-level immersion
+        pitch: 50,       // dramatic tilt — GTA helicopter angle
         bearing: 0,
         antialias: true,
         interactive: false,
@@ -91,39 +94,48 @@ export function CityViewScene({ lat, lng, month: _month, timeProgress, mapAction
 
       mapRef.current = map
 
-      ;(map as unknown as { on: (e: string, cb: () => void) => void }).on('load', () => {
+      // Deferred resize ensures Mapbox measures the container's real pixel dimensions
+      // before tiles start loading — mirrors MapboxStreetScene pattern
+      requestAnimationFrame(() => { if (!cancelled) map.resize() })
+
+      const mapEl = map as unknown as { on: (e: string, cb: () => void) => void }
+
+      mapEl.on('load', () => {
         if (cancelled) return
 
-        // Force a resize so Mapbox picks up the container's real dimensions
         map.resize()
 
-        // 3D building extrusions — no filter so every building with height shows
-        map.addLayer({
-          id: 'sim-buildings',
-          type: 'fill-extrusion',
-          source: 'composite',
-          'source-layer': 'building',
-          minzoom: 12,
-          paint: {
-            'fill-extrusion-color': [
-              'interpolate', ['linear'], ['coalesce', ['get', 'height'], 5],
-              0,   '#4a7090',
-              30,  '#6090b8',
-              100, '#78acd4',
-            ],
-            'fill-extrusion-height': ['coalesce', ['get', 'height'], 5],
-            'fill-extrusion-base': ['coalesce', ['get', 'min_height'], 0],
-            'fill-extrusion-opacity': 0.90,
-          },
-        })
+        // 3D building extrusions — wrapped in try/catch: Mapbox GL v3 may raise
+        // if composite/building isn't available in the loaded style version
+        try {
+          map.addLayer({
+            id: 'sim-buildings',
+            type: 'fill-extrusion',
+            source: 'composite',
+            'source-layer': 'building',
+            minzoom: 12,
+            paint: {
+              'fill-extrusion-color': [
+                'interpolate', ['linear'], ['coalesce', ['get', 'height'], 5],
+                0,   '#4a7090',
+                30,  '#6090b8',
+                100, '#78acd4',
+              ],
+              'fill-extrusion-height': ['coalesce', ['get', 'height'], 5],
+              'fill-extrusion-base': ['coalesce', ['get', 'min_height'], 0],
+              'fill-extrusion-opacity': 0.90,
+            },
+          })
+        } catch { /* style doesn't expose composite/building — base tiles still render */ }
 
-        // Fog pushed far back so foreground streets + buildings are fully clear
-        map.setFog({
-          range: [3, 16],
-          color: '#1e2e48',
-          'high-color': '#304870',
-          'horizon-blend': 0.04,
-        })
+        try {
+          map.setFog({
+            range: [3, 16],
+            color: '#1e2e48',
+            'high-color': '#304870',
+            'horizon-blend': 0.04,
+          })
+        } catch { /* fog not supported in this style version */ }
 
         // Slow orbital camera
         orbitRef.current = setInterval(() => {
@@ -134,6 +146,11 @@ export function CityViewScene({ lat, lng, month: _month, timeProgress, mapAction
 
         setMapLoaded(true)
       })
+
+      ;(map as unknown as { on: (e: string, cb: (...args: unknown[]) => void) => void })
+        .on('error', (...args: unknown[]) => {
+          console.error('[CityViewScene] Mapbox error:', ...args)
+        })
     }
 
     void init()
@@ -147,7 +164,20 @@ export function CityViewScene({ lat, lng, month: _month, timeProgress, mapAction
       mapRef.current = null
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [lat, lng, token])
+  }, [token])
+
+  // ── Smooth flyTo on location change ─────────────────────────────────────────
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || !mapLoaded) return
+    map.flyTo({
+      center: [lng, lat],
+      zoom: 15.5,
+      pitch: 50,
+      duration: 2800,
+      essential: true,
+    })
+  }, [lat, lng, mapLoaded])
 
   // ── Data layers — re-runs whenever map loads OR mapActions updates ───────────
   useEffect(() => {
@@ -196,11 +226,13 @@ export function CityViewScene({ lat, lng, month: _month, timeProgress, mapAction
     const map = mapRef.current
     if (!map || !mapLoaded) return
     const { bldLow, bldMid, bldHigh, fogColor, fogHigh } = phaseColors(timeProgress)
-    if (map.getLayer('sim-buildings')) {
-      map.setPaintProperty('sim-buildings', 'fill-extrusion-color', ['interpolate', ['linear'], ['coalesce', ['get', 'height'], 5], 0, bldLow, 30, bldMid, 100, bldHigh])
-      map.setPaintProperty('sim-buildings', 'fill-extrusion-opacity', 0.95)
-    }
-    map.setFog({ range: [3, 16], color: fogColor, 'high-color': fogHigh, 'horizon-blend': 0.04 })
+    try {
+      if (map.getLayer('sim-buildings')) {
+        map.setPaintProperty('sim-buildings', 'fill-extrusion-color', ['interpolate', ['linear'], ['coalesce', ['get', 'height'], 5], 0, bldLow, 30, bldMid, 100, bldHigh])
+        map.setPaintProperty('sim-buildings', 'fill-extrusion-opacity', 0.95)
+      }
+      map.setFog({ range: [3, 16], color: fogColor, 'high-color': fogHigh, 'horizon-blend': 0.04 })
+    } catch { /* style may not support these operations */ }
   }, [timeProgress, mapLoaded])
 
   if (!token) {
@@ -216,5 +248,11 @@ export function CityViewScene({ lat, lng, month: _month, timeProgress, mapAction
     )
   }
 
-  return <div ref={containerRef} className="absolute inset-0" />
+  return (
+    <div
+      ref={containerRef}
+      className="absolute inset-0"
+      style={{ opacity: mapLoaded ? 1 : 0, transition: 'opacity 1.2s ease' }}
+    />
+  )
 }
