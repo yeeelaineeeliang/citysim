@@ -24,6 +24,7 @@ export function useSimProfile({ demoMode, setStep }: UseSimProfileParams) {
     if (!storedProfile) return;
     setProfile(storedProfile);
     setStep("neighborhood");
+    void loadMatches(storedProfile);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [demoMode]);
 
@@ -31,20 +32,20 @@ export function useSimProfile({ demoMode, setStep }: UseSimProfileParams) {
     saveStoredProfile(p);
     setProfile(p);
     setStep("neighborhood");
-    setMatchMode(null);
     setMatches([]);
     setMatchError(null);
+    void loadMatches(p);
   }
 
-  async function runMatching() {
-    if (!profile) return;
+  async function loadMatches(nextProfile: UserProfile) {
+    setMatchMode("match");
     setMatchLoading(true);
     setMatchError(null);
     try {
       const res = await fetch("/api/match", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ profile, topN: 5 }),
+        body: JSON.stringify({ profile: nextProfile, topN: 5 }),
       });
       const data = (await res.json()) as { matches?: NeighborhoodMatch[]; error?: string };
       if (!res.ok || data.error) throw new Error(data.error ?? "Matching failed");
@@ -54,6 +55,11 @@ export function useSimProfile({ demoMode, setStep }: UseSimProfileParams) {
     } finally {
       setMatchLoading(false);
     }
+  }
+
+  async function runMatching() {
+    if (!profile) return;
+    await loadMatches(profile);
   }
 
   return {

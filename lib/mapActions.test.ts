@@ -49,9 +49,10 @@ test('builds an aggregate entertainment marker from count data', async () => {
   assert.equal(action.bars, 12)
   assert.deepEqual(action.center, { lat: 41.7943, lng: -87.5918 })
   assert.equal(action.farmersMarkets, true)
+  assert.ok(action.places && action.places.length > 0)
 })
 
-test('builds a coarse commute route without inventing a route label', async () => {
+test('builds a commute route with cached CTA geometry when available', async () => {
   const results: ToolResult[] = [
     {
       origin_neighborhood: 'Hyde Park',
@@ -86,7 +87,9 @@ test('builds a coarse commute route without inventing a route label', async () =
   if (action.type !== 'commute_route') return
   assert.equal(action.estimatedMinutes, 8)
   assert.equal(action.distanceMiles, 0.5)
-  assert.equal(action.routeLabel, null)
+  assert.equal(action.source, 'cta_gtfs_cached')
+  assert.ok(action.geometry && action.geometry.length > 2)
+  assert.match(action.routeLabel ?? '', /CTA Route/)
   assert.deepEqual(action.destination, { lat: 41.7886, lng: -87.5987 })
 })
 

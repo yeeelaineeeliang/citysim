@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { SignInButton, SignUpButton, useUser } from "@clerk/nextjs";
-import { CalendarDays, LockKeyhole, MapIcon, MessageCircle, Play, Send, Sparkles } from "lucide-react";
+import { ArrowLeft, CalendarDays, ListChecks, LockKeyhole, MapIcon, MessageCircle, Play, Send, Sparkles } from "lucide-react";
+import Link from "next/link";
 import { AuthActions } from "@/components/AuthActions";
 import { SeasonalStreetOverlay } from "@/components/SeasonalStreetOverlay";
 import { Skybox } from "@/components/Skybox";
@@ -14,13 +15,13 @@ import {
 } from "@/lib/simMessages";
 import type { UserProfile } from "@/lib/tools/types";
 import dynamic from "next/dynamic";
-import { OnboardingProfileForm } from "./OnboardingProfileForm";
 import { NEIGHBORHOOD_COORDINATES } from "@/lib/neighborhoodCoordinates";
 import type { CommunityAreaMapMatch } from "@/components/CommunityAreaBlockMap";
 import { DEMO_PROFILE, DEMO_NEIGHBORHOOD, DEMO_MONTH, DEMO_OPENING } from "@/lib/demoData";
 import { useSimProfile } from "./hooks/useSimProfile";
 import { useSimChat } from "./hooks/useSimChat";
 import { useSimRun } from "./hooks/useSimRun";
+import { ProfileOnboardingShell } from "./ProfileOnboardingShell";
 import {
   createSimMessage,
   getProfileWorkplaceCoords,
@@ -56,12 +57,34 @@ const DailyLifePanel = dynamic(
   () => import("@/components/DailyLifePanel").then((m) => m.DailyLifePanel),
   { ssr: false },
 );
+const SeasonTransitionCard = dynamic(
+  () => import("@/components/SeasonTransitionCard").then((m) => m.SeasonTransitionCard),
+  { ssr: false },
+);
 const SimAvatarScene = dynamic(
   () => import("@/components/SimAvatarScene").then((m) => m.SimAvatarScene),
   { ssr: false, loading: () => <div className="absolute inset-0 bg-[#0d1520]" /> },
 );
 
 // ─── UI-only helpers ──────────────────────────────────────────────────────────
+
+const MATCH_RANK_COLORS = ["#295C88", "#3F78A5", "#5B95BD", "#7CB6D0", "#A7D6E3"];
+
+function matchRankColor(rank: number) {
+  return MATCH_RANK_COLORS[rank - 1] ?? MATCH_RANK_COLORS[MATCH_RANK_COLORS.length - 1] ?? "#6f8d5f";
+}
+
+function commuteModePhrase(mode?: UserProfile["commutePref"]) {
+  if (mode === "driving") return "drive";
+  if (mode === "walking") return "walk";
+  if (mode === "biking") return "bike";
+  return "by bus/transit";
+}
+
+function displayMatchSummary(value: string | undefined, commutePref?: UserProfile["commutePref"]) {
+  if (!value) return null;
+  return value.replace(/^~(\d+)\s+min\s+from\b/i, `~$1 min ${commuteModePhrase(commutePref)} from`);
+}
 
 function MessageBubble({ message, compact = false }: { message: SimMessage; compact?: boolean }) {
   const isUser = message.role === "user";
@@ -138,6 +161,13 @@ function toolEvidence(tool: string) {
   };
 }
 
+function displayWorkplaceContext(workplace?: string) {
+  const trimmed = workplace?.trim();
+  if (!trimmed || trimmed.toLowerCase() === "not specified") return null;
+  const withoutChicago = trimmed.replace(/,\s*Chicago(?:,\s*(?:IL|Illinois))?$/i, "");
+  return withoutChicago.replace(/^The University of Chicago$/i, "University of Chicago");
+}
+
 function AuthGateCard({
   reason,
   onDismiss,
@@ -201,6 +231,7 @@ export function SimClient({ demoMode = false }: Readonly<SimClientProps>) {
   const [sceneMode, setSceneMode] = useState<SceneMode>("street");
   const [mobilePanel, setMobilePanel] = useState<MobilePanel>("map");
   const [sessionId, setSessionId] = useState<string | null>(null);
+  const currentMonthButtonRef = useRef<HTMLButtonElement | null>(null);
 
   const profileData = useSimProfile({ demoMode, setStep });
 
@@ -233,6 +264,11 @@ export function SimClient({ demoMode = false }: Readonly<SimClientProps>) {
     setAuthPrompt: chat.setAuthPrompt,
     setSceneMode,
   });
+
+  useEffect(() => {
+    if (step !== "sim") return;
+    currentMonthButtonRef.current?.scrollIntoView({ block: "nearest", inline: "center" });
+  }, [month, step]);
 
   // Demo init — touches state from all hooks, so lives here
   useEffect(() => {
@@ -302,44 +338,7 @@ export function SimClient({ demoMode = false }: Readonly<SimClientProps>) {
   // ══════════════════════════════════════════════════════════════════════════════
 
   if (step === "profile") {
-    return (
-      <main className="atlas-page min-h-screen px-5 py-5 text-[color:var(--foreground)] sm:px-8 sm:py-7">
-        <div className="mx-auto flex w-full max-w-7xl flex-col gap-6">
-          <header className="atlas-topbar">
-            <a className="atlas-brand" href="/">
-              <span className="atlas-brand-mark" />
-              CityLiving Sim
-            </a>
-            <AuthActions />
-          </header>
-
-          <section className="grid gap-6 lg:grid-cols-[minmax(0,0.78fr)_minmax(420px,1fr)]">
-            <div className="min-h-[320px] rounded-[var(--radius-xl)] border border-white/15 bg-[linear-gradient(145deg,rgba(79,111,69,0.94),rgba(199,101,69,0.7))] p-7 text-white shadow-[var(--shadow-lg)]">
-              <div className="flex h-full min-h-[280px] flex-col justify-between">
-                <div>
-                  <p className="atlas-kicker text-white/62">Living profile</p>
-                  <h1 className="mt-4 max-w-lg text-4xl font-semibold leading-[1.02] tracking-normal sm:text-5xl">
-                    Tune the simulation to your everyday route.
-                  </h1>
-                </div>
-                <div className="grid gap-3 sm:grid-cols-3">
-                  {["Budget", "Commute", "Priorities"].map((label, index) => (
-                    <div key={label} className="rounded-[var(--radius-md)] border border-white/14 bg-white/10 p-4 backdrop-blur">
-                      <p className="text-2xl font-semibold text-[color:var(--amber)]">0{index + 1}</p>
-                      <p className="mt-1 text-sm font-semibold text-white">{label}</p>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-
-            <section className="atlas-surface p-4 sm:p-6">
-              <OnboardingProfileForm onComplete={profileData.handleProfileComplete} />
-            </section>
-          </section>
-        </div>
-      </main>
-    );
+    return <ProfileOnboardingShell onComplete={profileData.handleProfileComplete} />;
   }
 
   // ══════════════════════════════════════════════════════════════════════════════
@@ -347,6 +346,21 @@ export function SimClient({ demoMode = false }: Readonly<SimClientProps>) {
   // ══════════════════════════════════════════════════════════════════════════════
 
   if (step === "neighborhood") {
+    const mapMatches: CommunityAreaMapMatch[] = profileData.matches.map((match, index) => ({
+      communityAreaNumber: match.communityAreaNumber,
+      name: match.name,
+      slug: match.slug,
+      descriptors: match.descriptors,
+      matchReason: match.matchReason,
+      rank: index + 1,
+    }));
+    const activeMatch = mapMatches.find((match) => match.name === profileData.neighborhood);
+    const workplaceContext = displayWorkplaceContext(profileData.profile?.workplace);
+    const profileContext = [
+      profileData.profile?.budgetRange ? `Budget ${profileData.profile.budgetRange}` : null,
+      workplaceContext ? `Near ${workplaceContext}` : null,
+    ].filter((item): item is string => Boolean(item));
+
     return (
       <main className="atlas-page atlas-page-neighborhood min-h-screen px-5 py-5 text-[color:var(--foreground)] sm:px-8 sm:py-7">
         <div className="mx-auto flex min-h-[calc(100vh-2.5rem)] w-full max-w-[1760px] flex-col gap-6 sm:min-h-[calc(100vh-3.5rem)]">
@@ -367,153 +381,108 @@ export function SimClient({ demoMode = false }: Readonly<SimClientProps>) {
           </header>
 
           <section className="grid min-h-0 flex-1 gap-6 lg:h-[calc(100vh-8.25rem)] lg:max-h-[calc(100vh-8.25rem)] lg:min-h-[640px] lg:overflow-hidden lg:grid-cols-[340px_minmax(0,1fr)] 2xl:grid-cols-[360px_minmax(0,1fr)]">
-            <aside className="atlas-card h-fit p-5 text-[color:var(--foreground)] lg:sticky lg:top-24">
-              <p className="atlas-kicker text-[color:var(--muted)]">Neighborhood fit</p>
-              <h1 className="mt-4 text-4xl font-semibold leading-[1.02] tracking-normal sm:text-5xl">
-                Pick a place to try on.
-              </h1>
-              <div className="mt-6 grid gap-3">
-                <div className="rounded-[var(--radius-md)] border border-[color:var(--panel-border)] bg-white/62 p-4">
-                  <p className="text-sm font-bold text-[color:var(--muted)]">Budget</p>
-                  <p className="mt-1 text-xl font-semibold">{profileData.profile?.budgetRange ?? "Set"}</p>
+            <aside className="atlas-card min-h-0 p-5 text-[color:var(--foreground)] lg:h-full lg:overflow-hidden">
+              <div className="flex h-full min-h-0 flex-col gap-4">
+                <div>
+                  <p className="atlas-kicker text-[color:var(--muted)]">Neighborhood fit</p>
+                  <div className="mt-2 flex items-center gap-2">
+                    <ListChecks size={19} className="text-[color:var(--sage-strong)]" aria-hidden="true" />
+                    <h1 className="text-2xl font-extrabold tracking-normal">Top matches</h1>
+                  </div>
+                  <p className="mt-2 line-clamp-2 text-sm font-semibold leading-5 text-[color:var(--muted)]">
+                    {profileContext.length ? profileContext.join(" · ") : "Ranked against your profile."}
+                  </p>
                 </div>
-                <div className="rounded-[var(--radius-md)] border border-[color:var(--panel-border)] bg-white/62 p-4">
-                  <p className="text-sm font-bold text-[color:var(--muted)]">Anchor</p>
-                  <p className="mt-1 line-clamp-2 text-xl font-semibold">{profileData.profile?.workplace ?? "Workplace"}</p>
+
+                <div className="min-h-0 flex-1 overflow-y-auto pr-1">
+                  {profileData.matchLoading && (
+                    <div className="grid gap-2">
+                      {[0, 1, 2, 3, 4].map((item) => (
+                        <div key={item} className="h-[74px] animate-pulse rounded-[var(--radius-md)] bg-white/58" />
+                      ))}
+                    </div>
+                  )}
+
+                  {!profileData.matchLoading && profileData.matchError && (
+                    <div className="rounded-[var(--radius-md)] border border-red-200 bg-red-50 p-3">
+                      <p className="text-sm font-bold text-red-700">Matches could not load.</p>
+                      <p className="mt-1 text-xs font-semibold leading-5 text-red-700/80">{profileData.matchError}</p>
+                      <button
+                        type="button"
+                        onClick={() => void profileData.runMatching()}
+                        className="mt-3 rounded-[var(--radius-sm)] border border-red-200 bg-white/72 px-3 py-2 text-xs font-extrabold text-red-700 transition hover:bg-white"
+                      >
+                        Try again
+                      </button>
+                    </div>
+                  )}
+
+                  {!profileData.matchLoading && !profileData.matchError && mapMatches.length === 0 && (
+                    <div className="rounded-[var(--radius-md)] border border-[color:var(--panel-border)] bg-white/62 p-3">
+                      <p className="text-sm font-bold text-[color:var(--foreground)]">No ranked matches yet.</p>
+                      <p className="mt-1 text-xs font-semibold leading-5 text-[color:var(--muted)]">
+                        Use the map or search to choose any community area.
+                      </p>
+                    </div>
+                  )}
+
+                  {!profileData.matchLoading && mapMatches.length > 0 && (
+                    <div className="grid gap-2">
+                      {mapMatches.slice(0, 5).map((match) => {
+                        const active = activeMatch?.communityAreaNumber === match.communityAreaNumber;
+                        const rankColor = matchRankColor(match.rank);
+                        const matchSummary = displayMatchSummary(match.matchReason, profileData.profile?.commutePref);
+                        return (
+                          <button
+                            key={match.communityAreaNumber}
+                            type="button"
+                            onClick={() => profileData.setNeighborhood(match.name)}
+                            style={active ? { borderColor: rankColor, backgroundColor: `${rankColor}14` } : undefined}
+                            className={`grid grid-cols-[32px_minmax(0,1fr)] items-start gap-3 rounded-[var(--radius-md)] border p-3 text-left transition ${
+                              active
+                                ? "border-[color:var(--panel-border)] shadow-sm"
+                                : "border-[color:var(--panel-border)] bg-white/64 hover:border-[color:var(--sage)] hover:bg-white/78"
+                            }`}
+                          >
+                            <span
+                              className="flex h-8 w-8 items-center justify-center rounded-full text-sm font-extrabold text-white shadow-sm"
+                              style={{ backgroundColor: rankColor }}
+                            >
+                              {match.rank}
+                            </span>
+                            <span className="min-w-0">
+                              <span className="block truncate text-sm font-extrabold text-[color:var(--foreground)]">{match.name}</span>
+                              <span className="mt-0.5 block line-clamp-2 text-xs font-semibold leading-4 text-[color:var(--muted)]">
+                                {matchSummary || match.descriptors?.slice(0, 2).join(" · ") || "Matches your profile"}
+                              </span>
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
               </div>
             </aside>
 
             <section className="atlas-surface flex min-h-[560px] flex-col p-4 sm:p-5 lg:h-full lg:min-h-0 lg:overflow-hidden">
-              <div className="mb-5 flex shrink-0 flex-col justify-between gap-3 sm:flex-row sm:items-end">
-                <div>
-                  <p className="atlas-kicker text-[color:var(--muted)]">Chicago community areas</p>
-                  <h2 className="mt-2 text-2xl font-extrabold">
-                    {profileData.matchMode ? profileData.neighborhood : "Choose or match"}
-                  </h2>
-                </div>
-                {profileData.matchMode && (
-                  <button
-                    onClick={() => profileData.setMatchMode(null)}
-                    className="atlas-button-secondary self-start"
-                  >
-                    Back
-                  </button>
-                )}
+              <div className="min-h-0 flex-1">
+                <CommunityAreaBlockMap
+                  selectedName={profileData.neighborhood}
+                  onSelect={profileData.setNeighborhood}
+                  onConfirm={pickNeighborhood}
+                  matches={mapMatches}
+                  mode={mapMatches.length ? "match" : "browse"}
+                  workplaceCoords={getProfileWorkplaceCoords(profileData.profile)}
+                  workplaceName={profileData.profile?.workplace}
+                  budgetRange={profileData.profile?.budgetRange}
+                  monthlyBudget={profileData.profile?.monthlyBudget}
+                  commutePref={profileData.profile?.commutePref}
+                  priorities={profileData.profile?.priorities}
+                  month={month}
+                  year={SIM_YEAR}
+                />
               </div>
-
-              {!profileData.matchMode && (
-                <div className="grid gap-3 md:grid-cols-2">
-                  <button
-                    onClick={() => profileData.setMatchMode("known")}
-                    className="atlas-card min-h-48 p-6 text-left transition hover:border-[color:var(--sage)] hover:shadow-[var(--shadow)]"
-                  >
-                    <p className="text-sm font-bold text-[color:var(--terracotta)]">Browse</p>
-                    <p className="mt-12 text-2xl font-semibold">I have a neighborhood in mind</p>
-                    <p className="mt-2 text-sm font-semibold leading-6 text-[color:var(--muted)]">
-                      Click a community-area block on the map.
-                    </p>
-                  </button>
-                  <button
-                    onClick={() => { profileData.setMatchMode("match"); void profileData.runMatching(); }}
-                    className="atlas-card min-h-48 p-6 text-left transition hover:border-[color:var(--sage)] hover:shadow-[var(--shadow)]"
-                  >
-                    <p className="text-sm font-bold text-[color:var(--sage-strong)]">Match</p>
-                    <p className="mt-12 text-2xl font-semibold">Help me find one</p>
-                    <p className="mt-2 text-sm font-semibold leading-6 text-[color:var(--muted)]">
-                      See your top fits as highlighted map blocks.
-                    </p>
-                  </button>
-                </div>
-              )}
-
-              {profileData.matchMode === "known" && (
-                <div className="min-h-0 flex-1">
-                  <CommunityAreaBlockMap
-                    selectedName={profileData.neighborhood}
-                    onSelect={profileData.setNeighborhood}
-                    onConfirm={pickNeighborhood}
-                    workplaceCoords={getProfileWorkplaceCoords(profileData.profile)}
-                    workplaceName={profileData.profile?.workplace}
-                    budgetRange={profileData.profile?.budgetRange}
-                    monthlyBudget={profileData.profile?.monthlyBudget}
-                    commutePref={profileData.profile?.commutePref}
-                    priorities={profileData.profile?.priorities}
-                    month={month}
-                    year={SIM_YEAR}
-                  />
-                </div>
-              )}
-
-              {profileData.matchMode === "match" && (
-                <div className="min-h-0 flex-1">
-                  {profileData.matchLoading && (
-                    <div className="grid h-full min-h-[560px] gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
-                      <div className="h-full min-h-[560px] animate-pulse rounded-[var(--radius-lg)] bg-[color:var(--sage-100)]" />
-                      <div className="grid content-start gap-3">
-                        {[0, 1, 2, 3, 4].map((item) => (
-                          <div key={item} className="h-20 animate-pulse rounded-[var(--radius-md)] bg-white/58" />
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                  {profileData.matchError && (
-                    <p className="rounded-[var(--radius-md)] border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{profileData.matchError}</p>
-                  )}
-                  {!profileData.matchLoading && !profileData.matchError && profileData.matches.length === 0 && (
-                    <div className="grid h-full min-h-0 gap-4">
-                      <p className="rounded-[var(--radius-md)] border border-[color:var(--panel-border)] bg-white/72 px-4 py-3 text-sm font-semibold text-[color:var(--muted)]">
-                        No matches returned. Choose a neighborhood directly or try again later.
-                      </p>
-                      <div className="min-h-0 flex-1">
-                        <CommunityAreaBlockMap
-                          selectedName={profileData.neighborhood}
-                          onSelect={profileData.setNeighborhood}
-                          onConfirm={pickNeighborhood}
-                          workplaceCoords={getProfileWorkplaceCoords(profileData.profile)}
-                          workplaceName={profileData.profile?.workplace}
-                          budgetRange={profileData.profile?.budgetRange}
-                          monthlyBudget={profileData.profile?.monthlyBudget}
-                          commutePref={profileData.profile?.commutePref}
-                          priorities={profileData.profile?.priorities}
-                          month={month}
-                          year={SIM_YEAR}
-                        />
-                      </div>
-                    </div>
-                  )}
-                  {!profileData.matchLoading && profileData.matches.length > 0 && (() => {
-                    const mapMatches: CommunityAreaMapMatch[] = profileData.matches.map((m, i) => ({
-                      communityAreaNumber: m.communityAreaNumber,
-                      name: m.name,
-                      slug: m.slug,
-                      descriptors: m.descriptors,
-                      matchReason: m.matchReason,
-                      rank: i + 1,
-                    }));
-
-                    return (
-                      <div className="h-full min-h-0">
-                        <CommunityAreaBlockMap
-                          selectedName={profileData.neighborhood}
-                          onSelect={profileData.setNeighborhood}
-                          onConfirm={pickNeighborhood}
-                          matches={mapMatches}
-                          mode="match"
-                          workplaceCoords={getProfileWorkplaceCoords(profileData.profile)}
-                          workplaceName={profileData.profile?.workplace}
-                          budgetRange={profileData.profile?.budgetRange}
-                          monthlyBudget={profileData.profile?.monthlyBudget}
-                          commutePref={profileData.profile?.commutePref}
-                          priorities={profileData.profile?.priorities}
-                          month={month}
-                          year={SIM_YEAR}
-                        />
-                      </div>
-                    );
-                  })()}
-                </div>
-              )}
             </section>
           </section>
         </div>
@@ -532,7 +501,7 @@ export function SimClient({ demoMode = false }: Readonly<SimClientProps>) {
   } = chat;
   const {
     runState, completedMonths, autoRunMonth, autoRunNarrative,
-    isTransitioning, timeProgress, dailySchedule, currentEvent, setCurrentEvent,
+    isSeasonTransitioning, timeProgress, dailySchedule, currentEvent, setCurrentEvent,
     streetViewCoords, streetViewHeading, routeCoords, commuteRouteCoords,
     startAutoRun, togglePause, stopAutoRun,
   } = runData;
@@ -545,7 +514,6 @@ export function SimClient({ demoMode = false }: Readonly<SimClientProps>) {
   const currentGroup = messageGroups.find((group) => group.key === currentGroupKey);
   const earlierGroups = messageGroups.filter((group) => group.key !== currentGroupKey);
   const currentMessages = currentGroup?.messages ?? [];
-  const hasCurrentOpener = currentMessages.some((message) => message.kind === "opener");
 
   return (
     <div className="relative h-screen overflow-hidden bg-[color:var(--sage-strong)] text-white">
@@ -568,13 +536,19 @@ export function SimClient({ demoMode = false }: Readonly<SimClientProps>) {
             <a href="/sim" className="underline opacity-70 hover:opacity-100">Exit demo</a>
           </div>
         )}
-        <header className="flex flex-col gap-3 overflow-hidden border-b border-white/12 bg-[rgba(79,111,69,0.72)] px-3 py-2.5 shadow-lg backdrop-blur-xl md:flex-row md:items-center md:gap-4 md:px-4">
+        <header className="relative z-20 flex flex-col gap-3 overflow-visible border-b border-white/12 bg-[rgba(79,111,69,0.72)] px-3 py-2.5 shadow-lg backdrop-blur-xl md:flex-row md:items-center md:gap-4 md:px-4">
           <div className="flex min-w-0 flex-1 flex-col gap-3 md:flex-row md:items-center md:gap-4">
             <div className="flex min-w-0 shrink-0 items-center gap-2">
-              <label className="text-xs font-extrabold uppercase tracking-[0.14em] text-white/65">
-                Neighborhood
-              </label>
+              <Link
+                href="/profile"
+                aria-label="Back to profile"
+                className="inline-flex h-9 shrink-0 items-center justify-center gap-1.5 rounded-[var(--radius-sm)] border border-white/20 bg-white/12 px-2.5 text-xs font-extrabold text-white/85 shadow-sm backdrop-blur transition hover:bg-white/20 hover:text-white sm:px-3"
+              >
+                <ArrowLeft size={16} aria-hidden="true" />
+                <span className="hidden sm:inline">Profile</span>
+              </Link>
               <select
+                aria-label="Neighborhood"
                 value={neighborhood}
                 onChange={(e) => {
                   const next = e.target.value;
@@ -588,7 +562,7 @@ export function SimClient({ demoMode = false }: Readonly<SimClientProps>) {
               </select>
             </div>
 
-            <div className="atlas-scrollbar flex w-full min-w-0 flex-1 gap-1 overflow-x-auto md:w-auto">
+            <div className={`atlas-scrollbar -mb-2 flex w-full min-w-0 flex-1 gap-1 overflow-x-auto pb-2 md:w-auto ${runState !== "idle" ? "hidden" : ""}`}>
               {MONTH_SHORT.map((name, i) => {
                 const m = i + 1;
                 const isCompleted = completedMonths.includes(m);
@@ -597,9 +571,10 @@ export function SimClient({ demoMode = false }: Readonly<SimClientProps>) {
                 return (
                   <button
                     key={name}
+                    ref={isCurrent ? currentMonthButtonRef : undefined}
                     onClick={() => changeMonth(m)}
                     title={isCompleted ? `View ${name} recap` : undefined}
-                    className={`shrink-0 rounded-[var(--radius-sm)] px-2.5 py-1.5 text-xs font-bold transition-colors ${
+                    className={`relative shrink-0 rounded-[var(--radius-sm)] px-2.5 py-1.5 text-xs font-bold transition-colors ${
                       isCompleted
                         ? "bg-[color:var(--park)] text-white"
                         : isAutoRunning
@@ -610,51 +585,55 @@ export function SimClient({ demoMode = false }: Readonly<SimClientProps>) {
                     }`}
                   >
                     {isCompleted ? `✓ ${name}` : name}
+                    {isCurrent && (
+                      <span
+                        aria-hidden="true"
+                        className="pointer-events-none absolute left-1/2 top-full h-2 w-px -translate-x-1/2 bg-[color:var(--amber)]"
+                      />
+                    )}
                   </button>
                 );
               })}
             </div>
           </div>
 
-          <div className="flex shrink-0 items-center justify-between gap-3">
-            <button
-              onClick={() => setStep("neighborhood")}
-              className="text-xs font-bold uppercase tracking-[0.12em] text-white/65 hover:text-white"
-            >
-              Change<span className="hidden sm:inline"> neighborhood</span>
-            </button>
-            <AuthActions className="hidden border-white/20 bg-white/15 md:inline-flex" />
+          <div className="hidden shrink-0 items-center justify-between gap-3 md:flex">
+            <AuthActions className="border-white/20 bg-white/15" />
           </div>
         </header>
 
-        {/* Full-screen auto-run layout — 3D city-builder view */}
+        {/* Full-screen auto-run layout — Street View immersion */}
         {runState !== "idle" && sceneCoords && (() => {
           const sceneMonth = autoRunMonth ?? month;
+          const streetHour = Math.round(7 + timeProgress * 16); // 7 AM → 11 PM arc
           return (
             <div data-testid="sim-avatar-scene" className="relative min-h-0 flex-1 overflow-hidden bg-black">
-              {/* Layer 1: Atmospheric backdrop */}
+              {/* Layer 1: Street View — primary full-screen visual */}
               <div className="absolute inset-0">
-                <Skybox
-                  month={sceneMonth}
-                  crimeSignal={0}
-                  serviceSignal={null}
-                  transitSignal={0}
-                  fullBleed
-                  showElements
-                />
-                <CityViewScene
+                <StreetViewPanorama
                   lat={(streetViewCoords ?? sceneCoords).lat}
                   lng={(streetViewCoords ?? sceneCoords).lng}
                   month={sceneMonth}
-                  timeProgress={timeProgress}
-                  mapActions={activeMapActions}
+                  hourOfDay={streetHour}
+                  targetHeading={streetViewHeading}
+                  enableDrift
                 />
               </div>
-              {/* Layer 2: Avatar route map — corner inset */}
+              {/* Layer 2: Avatar route map — corner inset, top-right */}
               <div
                 data-testid="mini-map"
-                className="absolute overflow-hidden rounded-xl border border-white/20 shadow-2xl"
-                style={{ bottom: 168, right: 16, width: 280, height: 180, zIndex: 1050 }}
+                style={{
+                  position: "absolute",
+                  top: 56,
+                  right: 16,
+                  width: 300,
+                  height: 200,
+                  zIndex: 1050,
+                  borderRadius: 12,
+                  overflow: "hidden",
+                  border: "1px solid rgba(255,255,255,0.18)",
+                  boxShadow: "0 4px 24px rgba(0,0,0,0.6)",
+                }}
               >
                 <SimAvatarScene
                   lat={sceneCoords.lat}
@@ -670,6 +649,23 @@ export function SimClient({ demoMode = false }: Readonly<SimClientProps>) {
                   workplaceName={profile?.workplace}
                   compact
                 />
+                {/* Label — tells the user what this map shows */}
+                <div
+                  style={{
+                    position: "absolute", top: 0, left: 0, right: 0,
+                    padding: "4px 7px",
+                    fontSize: 9,
+                    fontWeight: 700,
+                    color: "rgba(255,255,255,0.65)",
+                    letterSpacing: "0.1em",
+                    textTransform: "uppercase",
+                    background: "linear-gradient(to bottom, rgba(0,0,0,0.55), transparent)",
+                    pointerEvents: "none",
+                    zIndex: 1201,
+                  }}
+                >
+                  Day route
+                </div>
               </div>
               {/* Layer 3: CSS weather particles */}
               <WeatherLayer month={sceneMonth} />
@@ -677,7 +673,7 @@ export function SimClient({ demoMode = false }: Readonly<SimClientProps>) {
               <div className="absolute right-4 top-4 z-[1100]">
                 <button
                   onClick={stopAutoRun}
-                  className="rounded-[var(--radius-sm)] border border-white/20 bg-[rgba(19,33,43,0.82)] px-3 py-2 text-xs font-extrabold uppercase tracking-[0.12em] text-white/80 shadow backdrop-blur transition hover:bg-[color:var(--foreground)] hover:text-white"
+                  className="rounded-[var(--radius-sm)] border border-white/20 bg-[rgba(19,33,43,0.82)] px-3 py-2 text-xs font-bold text-white/80 shadow backdrop-blur transition hover:bg-[color:var(--foreground)] hover:text-white"
                 >
                   Exit
                 </button>
@@ -685,6 +681,7 @@ export function SimClient({ demoMode = false }: Readonly<SimClientProps>) {
               {/* Narrative panel */}
               <DailyLifePanel
                 monthName={MONTH_NAMES[sceneMonth - 1] ?? ""}
+                month={sceneMonth}
                 neighborhood={neighborhood}
                 narrative={autoRunNarrative || (runState === "running" ? "Looking around…" : runState === "done" ? "Year complete." : "")}
                 isPaused={runState === "paused"}
@@ -692,27 +689,12 @@ export function SimClient({ demoMode = false }: Readonly<SimClientProps>) {
                 timeProgress={timeProgress}
                 currentEvent={currentEvent ?? undefined}
               />
-              {/* Month transition interstitial */}
-              <div
-                className="absolute inset-0 z-[1200] flex flex-col items-center justify-center"
-                style={{
-                  background: "rgba(8,16,22,0.82)",
-                  backdropFilter: "blur(6px)",
-                  opacity: isTransitioning && autoRunMonth !== null && autoRunMonth < 12 ? 1 : 0,
-                  transition: "opacity 0.45s ease",
-                  pointerEvents: isTransitioning ? "auto" : "none",
-                }}
-              >
-                <p className="mb-2 text-xs font-extrabold uppercase tracking-[0.18em] text-white/40">
-                  {autoRunMonth != null ? MONTH_NAMES[autoRunMonth - 1] : ""} ✓
-                </p>
-                <p className="text-4xl font-bold tracking-tight text-white">
-                  {autoRunMonth != null ? MONTH_NAMES[autoRunMonth] : ""}
-                </p>
-                <p className="mt-2 text-sm text-white/50">
-                  {autoRunMonth != null ? `Month ${autoRunMonth + 1} of 12` : ""}
-                </p>
-              </div>
+              {/* Season transition card — floats over Street View, no black screen */}
+              <SeasonTransitionCard
+                month={autoRunMonth ?? month}
+                neighborhood={neighborhood}
+                visible={isSeasonTransitioning}
+              />
             </div>
           );
         })()}
@@ -746,8 +728,8 @@ export function SimClient({ demoMode = false }: Readonly<SimClientProps>) {
                   )}
                   <div className="pointer-events-none absolute inset-x-0 top-0 z-[1000] flex flex-wrap items-start justify-between gap-3 bg-gradient-to-b from-black/60 to-transparent px-4 py-3">
                     <div className="flex flex-wrap items-center gap-2">
-                      <p className="text-xs font-extrabold uppercase tracking-[0.14em] text-white/75">
-                        {sceneMode === "map" ? "Interactive map" : "Street View"}
+                      <p className="text-xs font-bold text-white/75">
+                        {sceneMode === "map" ? "Interactive map" : "Street view"}
                       </p>
                       <div className="pointer-events-auto flex rounded-[var(--radius-sm)] border border-white/20 bg-black/45 p-0.5 shadow-sm backdrop-blur">
                         {(["street", "map"] as const).map((mode) => (
@@ -762,23 +744,25 @@ export function SimClient({ demoMode = false }: Readonly<SimClientProps>) {
                                 : "text-white/75 hover:bg-white/15 hover:text-white"
                             }`}
                           >
-                            {mode === "street" ? "Street View" : "Map"}
+                            {mode === "street" ? "Street view" : "Map"}
                           </button>
                         ))}
                       </div>
                     </div>
                     <p className="rounded-[var(--radius-sm)] bg-black/42 px-2 py-1 text-xs font-bold text-white">{monthName} {SIM_YEAR}</p>
                   </div>
-                  <div className="pointer-events-none absolute inset-x-0 bottom-0 z-[900] bg-gradient-to-t from-black/80 via-black/40 to-transparent px-4 pb-4 pt-16">
-                    <p className="text-2xl font-semibold leading-tight text-white">{neighborhood}</p>
-                  </div>
+                  {sceneMode === "street" && (
+                    <div className="pointer-events-none absolute inset-x-0 bottom-0 z-[900] bg-gradient-to-t from-black/80 via-black/40 to-transparent px-4 pb-8 pt-16">
+                      <p className="ml-14 text-2xl font-semibold leading-tight text-white">{neighborhood}</p>
+                    </div>
+                  )}
               </div>
             </div>
           </section>
 
           <section className={`flex min-h-0 flex-col border-t border-white/10 bg-[color:var(--panel-solid)] text-[color:var(--foreground)] shadow-2xl backdrop-blur-md lg:border-l lg:border-t-0 lg:border-white/10 ${mobilePanel !== "advisor" ? "max-lg:hidden" : ""}`}>
             <div className="border-b border-[color:var(--panel-border)] px-5 py-4">
-              <p className="text-xs font-extrabold uppercase tracking-[0.16em] text-[color:var(--muted)]">Sam · {neighborhood}</p>
+              <p className="text-xs font-bold text-[color:var(--muted)]">Your simulation · {neighborhood}</p>
               <p className="mt-1 text-sm font-extrabold text-[color:var(--foreground)]">{monthName} {SIM_YEAR}</p>
             </div>
 
@@ -792,13 +776,13 @@ export function SimClient({ demoMode = false }: Readonly<SimClientProps>) {
               <div className="mx-auto flex max-w-2xl flex-col gap-5 lg:max-w-none">
                 {earlierGroups.length > 0 && (
                   <details className="rounded-[var(--radius-lg)] border border-[color:var(--panel-border)] bg-white/45 px-4 py-3 text-sm text-[color:var(--muted)]">
-                    <summary className="cursor-pointer select-none text-xs font-extrabold uppercase tracking-[0.14em] text-[color:var(--muted)]">
+                    <summary className="cursor-pointer select-none text-xs font-bold text-[color:var(--muted)]">
                       Earlier months
                     </summary>
                     <div className="mt-4 space-y-5">
                       {earlierGroups.map((group) => (
                         <div key={group.key} className="space-y-2 border-t border-[color:var(--panel-border)] pt-4 first:border-t-0 first:pt-0">
-                          <p className="text-xs font-extrabold uppercase tracking-[0.14em] text-[color:var(--muted)]">
+                          <p className="text-xs font-bold text-[color:var(--muted)]">
                             {MONTH_NAMES[group.month - 1]} {group.year}
                           </p>
                           <div className="space-y-2 opacity-80">
@@ -813,26 +797,49 @@ export function SimClient({ demoMode = false }: Readonly<SimClientProps>) {
                 )}
 
                 <section className="space-y-4">
-                  <div className="flex items-baseline justify-between gap-3">
-                    <p className="text-xs font-extrabold uppercase tracking-[0.16em] text-[color:var(--muted)]">Current month</p>
-                    <p className="text-xs font-bold text-[color:var(--muted)]">{monthName} · {neighborhood}</p>
-                  </div>
+                  <p className="text-xs font-bold text-[color:var(--muted)]">Current month</p>
 
                   {currentMessages.length === 0 && !loading && !openingThinking && (
                     <div className="space-y-3 rounded-[var(--radius-lg)] border border-[color:var(--panel-border)] bg-white/58 px-4 py-4">
                       <p className="text-sm font-semibold text-[color:var(--muted)]">Sam will open this month here.</p>
-                      {renderSuggestedQuestionChips()}
                     </div>
                   )}
 
                   {currentMessages.map((msg, i) => (
                     <div key={`${currentGroupKey}-${msg.kind}-${i}`} className="space-y-3">
                       <MessageBubble message={msg} />
-                      {msg.kind === "opener" && renderSuggestedQuestionChips()}
                     </div>
                   ))}
+                </section>
 
-                  {!hasCurrentOpener && currentMessages.length > 0 && renderSuggestedQuestionChips()}
+                {runState === "idle" && (
+                  <section>
+                    <button
+                      type="button"
+                      onClick={startAutoRun}
+                      className="group grid w-full grid-cols-[32px_minmax(0,1fr)_auto] items-center gap-3 rounded-[var(--radius-md)] border border-[color:var(--panel-border)] bg-white/58 px-4 py-3 text-left shadow-sm transition hover:border-[color:var(--sage)] hover:bg-white/78"
+                    >
+                      <span className="flex h-8 w-8 items-center justify-center rounded-full bg-[rgba(111,141,95,0.14)] text-[color:var(--sage-strong)]">
+                        <Play size={16} aria-hidden="true" />
+                      </span>
+                      <span className="min-w-0">
+                        <span className="block text-sm font-extrabold text-[color:var(--foreground)]">
+                          Run a year in {neighborhood}
+                        </span>
+                        <span className="mt-1 block text-xs font-semibold leading-5 text-[color:var(--muted)]">
+                          4 seasons · Jan → Apr → Jul → Oct · ~2 min
+                        </span>
+                      </span>
+                      <span className="rounded-[var(--radius-sm)] border border-[rgba(111,141,95,0.32)] px-2.5 py-1.5 text-xs font-extrabold text-[color:var(--sage-strong)] transition group-hover:bg-[color:var(--sage)] group-hover:text-white">
+                        Start →
+                      </span>
+                    </button>
+                  </section>
+                )}
+
+                <section className="space-y-3 border-t border-[color:var(--panel-border)] pt-5">
+                  <p className="text-xs font-bold text-[color:var(--muted)]">Suggested questions</p>
+                  {renderSuggestedQuestionChips()}
                 </section>
 
                 {openingThinking && (
@@ -896,16 +903,6 @@ export function SimClient({ demoMode = false }: Readonly<SimClientProps>) {
             </div>
 
             <footer className="border-t border-[color:var(--panel-border)] bg-[rgba(255,250,242,0.94)] px-5 py-4">
-              {runState === "idle" && (
-                <div className="mx-auto mb-3 max-w-2xl lg:max-w-none">
-                  <button
-                    onClick={startAutoRun}
-                    className="atlas-button-primary w-full gap-2"
-                  >
-                    <Play size={16} /> Run my year in {neighborhood}
-                  </button>
-                </div>
-              )}
               <form
                 onSubmit={(e) => { e.preventDefault(); void chat.send(input); }}
                 className="mx-auto flex max-w-2xl gap-2 lg:max-w-none"

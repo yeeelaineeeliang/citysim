@@ -89,7 +89,7 @@ test('answers Oakland to UChicago commute without inventing L-route certainty', 
   const action = result.mapActions?.find((item) => item.type === 'commute_route')
   assert.ok(action)
   if (action.type === 'commute_route') {
-    assert.equal(action.routeLabel, null)
+    assert.ok(action.source === 'cta_gtfs_cached' || action.routeLabel === null)
     assert.equal(action.destinationName, 'The University of Chicago')
   }
   assertNoInventedRail(result.response)

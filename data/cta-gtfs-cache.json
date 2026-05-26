@@ -1,0 +1,68 @@
+{
+  "source": "local CTA GTFS seed; replace with CityData/filtered/cta_gtfs_cache.json from npm run ingest:cta-gtfs",
+  "routes": [
+    {
+      "routeId": "6",
+      "routeShortName": "6",
+      "routeLongName": "Jackson Park Express",
+      "mode": "bus",
+      "points": [
+        [41.80952, -87.58923],
+        [41.80522, -87.58878],
+        [41.8002, -87.58862],
+        [41.79695, -87.5867],
+        [41.79308, -87.58602],
+        [41.7908, -87.58934],
+        [41.78935, -87.59422],
+        [41.7886, -87.5987]
+      ],
+      "stops": [
+        { "name": "47th Street", "lat": 41.80952, "lng": -87.58923 },
+        { "name": "53rd Street", "lat": 41.8002, "lng": -87.58862 },
+        { "name": "55th Street", "lat": 41.79308, "lng": -87.58602 },
+        { "name": "University of Chicago", "lat": 41.7886, "lng": -87.5987 }
+      ]
+    },
+    {
+      "routeId": "55",
+      "routeShortName": "55",
+      "routeLongName": "Garfield",
+      "mode": "bus",
+      "points": [
+        [41.79436, -87.6256],
+        [41.79431, -87.62018],
+        [41.79424, -87.61756],
+        [41.79406, -87.61223],
+        [41.79382, -87.6073],
+        [41.79349, -87.60214],
+        [41.7932, -87.59876],
+        [41.7923, -87.59646]
+      ],
+      "stops": [
+        { "name": "Garfield & King Drive", "lat": 41.79431, "lng": -87.62018 },
+        { "name": "Garfield & Cottage Grove", "lat": 41.79382, "lng": -87.6073 },
+        { "name": "Garfield & Ellis", "lat": 41.7932, "lng": -87.59876 }
+      ]
+    },
+    {
+      "routeId": "2",
+      "routeShortName": "2",
+      "routeLongName": "Hyde Park Express",
+      "mode": "bus",
+      "points": [
+        [41.81098, -87.60402],
+        [41.80644, -87.60412],
+        [41.80185, -87.6041],
+        [41.79711, -87.604],
+        [41.79345, -87.60214],
+        [41.79066, -87.60065],
+        [41.7886, -87.5987]
+      ],
+      "stops": [
+        { "name": "Drexel & 47th", "lat": 41.81098, "lng": -87.60402 },
+        { "name": "Drexel & 51st", "lat": 41.80185, "lng": -87.6041 },
+        { "name": "University of Chicago", "lat": 41.7886, "lng": -87.5987 }
+      ]
+    }
+  ]
+}

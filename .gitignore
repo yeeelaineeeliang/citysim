@@ -7,6 +7,7 @@ SESSION_SUMMARY.md
 
 node_modules
 .next
+.venv/
 dist
 .env
 .env.local

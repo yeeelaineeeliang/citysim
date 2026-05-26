@@ -1,5 +1,8 @@
 import { hasSupabaseCredentials, createSupabaseAdminClient } from '@/lib/supabase'
 import { getCoordinateByName } from '@/lib/neighborhoodCoordinates'
+import { findCachedTransitCorridor } from '@/lib/ctaGtfs'
+import { fetchOSRMRoute, commuteMode } from '@/lib/fetchRoute'
+import { queryLocalEntertainmentPlaces } from '@/lib/localPlaces'
 import type {
   ChatRequest,
   CommuteResult,
@@ -201,6 +204,10 @@ export async function buildMapActions(
 
   const entertainment = findResult(items, 'query_entertainment', isEntertainmentResult)
   if (entertainment) {
+    const placesResult = await queryLocalEntertainmentPlaces({
+      neighborhood: req.neighborhood,
+      limit: 90,
+    })
     actions.push({
       type: 'entertainment_summary',
       id: `entertainment-${req.neighborhood}-${year}-${req.month}`,
@@ -210,6 +217,7 @@ export async function buildMapActions(
       bars: entertainment.bars,
       parks: entertainment.parks,
       farmersMarkets: entertainment.farmers_markets,
+      ...(placesResult.places.length ? { places: placesResult.places } : {}),
     })
   }
 
@@ -219,25 +227,53 @@ export async function buildMapActions(
     commute &&
     validPoint(req.profile.workplaceLat, req.profile.workplaceLng)
   ) {
+    const destination = {
+      lat: req.profile.workplaceLat as number,
+      lng: req.profile.workplaceLng as number,
+    }
     const routeLabel = routeLabelFromTransit(transit)
     const timing = commute.estimated_minutes ? `~${commute.estimated_minutes} min` : 'Coarse commute'
     const distance = commute.distance_miles !== null ? `${commute.distance_miles.toFixed(1)} mi` : null
+    const transitCorridor = commute.mode === 'transit'
+      ? findCachedTransitCorridor({
+          origin: center,
+          destination,
+          routeLabel,
+          stopNames: transit?.stops ?? [],
+        })
+      : null
+    const osrmRoute = commute.mode !== 'transit'
+      ? await fetchOSRMRoute(center, destination, commuteMode(commute.mode))
+      : null
+    const geometry = transitCorridor?.geometry ?? osrmRoute?.coords ?? undefined
+    const source = transitCorridor
+      ? 'cta_gtfs_cached'
+      : osrmRoute?.coords
+        ? 'osrm'
+        : 'estimate'
+    const confidence = transitCorridor?.confidence ?? (osrmRoute?.coords ? 'medium' : commute.confidence)
+    const caveat = transitCorridor
+      ? 'CTA GTFS route-shape corridor from cached public data; verify exact stop, transfer, and schedule details before signing.'
+      : commute.mode === 'transit'
+        ? 'Transit geometry is unavailable in the local CTA cache, so this remains an access estimate rather than a route line.'
+        : commute.note || 'Road-network route from OSRM when available; verify exact conditions before travel.'
     actions.push({
       type: 'commute_route',
       id: `commute-${req.neighborhood}-${year}-${req.month}`,
-      title: [timing, distance, routeLabel ?? commute.mode].filter(Boolean).join(' · '),
+      title: [timing, distance, transitCorridor?.label ?? routeLabel ?? commute.mode].filter(Boolean).join(' · '),
       originName: req.neighborhood,
       destinationName: commute.destination || req.profile.workplace || 'Workplace',
       origin: center,
-      destination: {
-        lat: req.profile.workplaceLat as number,
-        lng: req.profile.workplaceLng as number,
-      },
+      destination,
       mode: commute.mode,
       distanceMiles: commute.distance_miles,
       estimatedMinutes: commute.estimated_minutes,
-      routeLabel,
-      caveat: 'Coarse spatial estimate, not turn-by-turn navigation.',
+      routeLabel: transitCorridor?.label ?? routeLabel,
+      caveat,
+      ...(geometry ? { geometry } : {}),
+      ...(transitCorridor?.segments ? { segments: transitCorridor.segments } : {}),
+      source,
+      confidence,
     })
   }
 

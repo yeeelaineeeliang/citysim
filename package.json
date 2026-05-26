@@ -12,7 +12,9 @@
     "ingest:v1": "tsx scripts/ingest_v1.ts",
     "verify:v1": "tsx scripts/verify_v1.ts",
     "preprocess": "tsx scripts/preprocess_local_data.ts",
-    "cache:street-view": "tsx scripts/cache_street_view.ts"
+    "cache:street-view": "tsx scripts/cache_street_view.ts",
+    "ingest:places": "tsx scripts/ingest_entertainment_places.ts",
+    "ingest:cta-gtfs": "tsx scripts/ingest_cta_gtfs.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.91.1",

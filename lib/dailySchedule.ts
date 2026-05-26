@@ -1,4 +1,19 @@
-import type { UserProfile } from './tools/types'
+import type { EntertainmentPlace, UserProfile } from './tools/types'
+
+const MONTHLY_SURPRISE: Record<number, string> = {
+  1:  "Polar vortex — stayed in tonight",
+  2:  "Valentine's dinner out",
+  3:  "St. Patrick's Day — Chicago River dyed green",
+  4:  "Cherry blossoms spotted near the lakefront",
+  5:  "First farmers market of the season",
+  6:  "Juneteenth festival on the lakefront",
+  7:  "Fourth of July fireworks at Navy Pier",
+  8:  "Lollapalooza weekend in the city",
+  9:  "Chicago Jazz Fest at Millennium Park",
+  10: "Halloween block party on 53rd Street",
+  11: "First real snowfall of the season",
+  12: "Ice skating at Millennium Park",
+}
 
 export interface DayEvent {
   timeLabel: string
@@ -55,11 +70,20 @@ export function buildDailySchedule(
   parks: string[],
   month: number,
   neighborhoodName: string,
+  namedPlaces?: EntertainmentPlace[],
 ): DayEvent[] {
   const events: DayEvent[] = []
   const hasCar = profile.commutePref === 'driving'
-  const parkName = parks[0] ?? `${neighborhoodName} Park`
   const hasFitness = profile.lifestyle.includes('fitness')
+
+  // Named places from local data — fall back to deterministic offsets
+  const foodPlaces = namedPlaces?.filter(p => p.category === 'food') ?? []
+  const parkPlaces = namedPlaces?.filter(p => p.category === 'park') ?? []
+  const lunchNamedPlace = foodPlaces.length > 0 ? foodPlaces[month % foodPlaces.length] : null
+  const dinnerNamedPlace = foodPlaces.length > 0 ? foodPlaces[(month * 3 + 1) % foodPlaces.length] : null
+  const parkNamedPlace = parkPlaces[0] ?? null
+
+  const parkName = parkNamedPlace?.name ?? parks[0] ?? `${neighborhoodName} Park`
 
   // Deterministic nearby spots — vary by month so they shift each month
   const lunchSpot = nearbyPoint(neighborhoodCenter, month * 3 + 1, month * 7 + 2, 0.008)
@@ -114,9 +138,9 @@ export function buildDailySchedule(
     // 5 — Lunch
     events.push({
       timeLabel: '12:30 PM',
-      activityLabel: 'Lunch break',
-      contextLabel: `Near ${neighborhoodName}`,
-      location: lunchSpot,
+      activityLabel: lunchNamedPlace ? `Lunch at ${lunchNamedPlace.name}` : 'Lunch break',
+      contextLabel: lunchNamedPlace ? `${neighborhoodName} · ${lunchNamedPlace.name}` : `Near ${neighborhoodName}`,
+      location: lunchNamedPlace ? { lat: lunchNamedPlace.lat, lng: lunchNamedPlace.lng } : lunchSpot,
       kind: 'lunch',
       dwellTicks: 30,
     })
@@ -146,9 +170,9 @@ export function buildDailySchedule(
   if (isSummer(month) || hasFitness) {
     events.push({
       timeLabel: '6:00 PM',
-      activityLabel: hasFitness ? 'Evening run' : 'Out in the park',
+      activityLabel: hasFitness ? `Evening run at ${parkName}` : `Out in ${parkName}`,
       contextLabel: parkName,
-      location: parkSpot,
+      location: parkNamedPlace ? { lat: parkNamedPlace.lat, lng: parkNamedPlace.lng } : parkSpot,
       kind: 'park',
       dwellTicks: 25,
     })
@@ -166,14 +190,27 @@ export function buildDailySchedule(
   // 9 — Dinner out
   events.push({
     timeLabel: '7:30 PM',
-    activityLabel: 'Dinner out',
-    contextLabel: `${neighborhoodName} · Restaurant`,
-    location: dinnerSpot,
+    activityLabel: dinnerNamedPlace ? `Dinner at ${dinnerNamedPlace.name}` : 'Dinner out',
+    contextLabel: dinnerNamedPlace ? `${neighborhoodName} · ${dinnerNamedPlace.name}` : `${neighborhoodName} · Restaurant`,
+    location: dinnerNamedPlace ? { lat: dinnerNamedPlace.lat, lng: dinnerNamedPlace.lng } : dinnerSpot,
     kind: 'social',
     dwellTicks: 20,
   })
 
-  // 10 — Home for the night
+  // 10 — Monthly surprise (one Chicago event per month)
+  const surpriseLabel = MONTHLY_SURPRISE[month]
+  if (surpriseLabel) {
+    events.push({
+      timeLabel: '9:30 PM',
+      activityLabel: surpriseLabel,
+      contextLabel: 'Chicago · Monthly',
+      location: nearbyPoint(neighborhoodCenter, month * 13 + 6, month * 7 + 4, 0.012),
+      kind: 'social',
+      dwellTicks: 18,
+    })
+  }
+
+  // 11 — Home for the night
   events.push({
     timeLabel: '10:30 PM',
     activityLabel: 'Home for the night',
@@ -193,9 +230,16 @@ function buildWeekendSchedule(
   parks: string[],
   month: number,
   neighborhoodName: string,
+  namedPlaces?: EntertainmentPlace[],
 ): DayEvent[] {
-  const parkName = parks[0] ?? `${neighborhoodName} Park`
   const hasFitness = profile.lifestyle.includes('fitness')
+
+  const foodPlaces = namedPlaces?.filter(p => p.category === 'food') ?? []
+  const parkPlaces = namedPlaces?.filter(p => p.category === 'park') ?? []
+  const brunchNamedPlace = foodPlaces.length > 0 ? foodPlaces[(month * 2) % foodPlaces.length] : null
+  const dinnerNamedPlace = foodPlaces.length > 0 ? foodPlaces[(month * 4 + 2) % foodPlaces.length] : null
+  const parkNamedPlace = parkPlaces[0] ?? null
+  const parkName = parkNamedPlace?.name ?? parks[0] ?? `${neighborhoodName} Park`
 
   // Weekend spots use different seeds from weekday to produce different locations
   const brunchSpot    = nearbyPoint(neighborhoodCenter, month * 4 + 9,  month * 8 + 3,  0.009)
@@ -222,25 +266,25 @@ function buildWeekendSchedule(
     },
     {
       timeLabel: '12:00 PM',
-      activityLabel: 'Brunch out',
-      contextLabel: `${neighborhoodName} · Brunch`,
-      location: afternoonSpot,
+      activityLabel: brunchNamedPlace ? `Brunch at ${brunchNamedPlace.name}` : 'Brunch out',
+      contextLabel: brunchNamedPlace ? `${neighborhoodName} · ${brunchNamedPlace.name}` : `${neighborhoodName} · Brunch`,
+      location: brunchNamedPlace ? { lat: brunchNamedPlace.lat, lng: brunchNamedPlace.lng } : afternoonSpot,
       kind: 'lunch',
       dwellTicks: 30,
     },
     {
       timeLabel: '2:30 PM',
-      activityLabel: hasFitness ? 'Long afternoon run' : `Afternoon at ${parkName}`,
+      activityLabel: hasFitness ? `Long run at ${parkName}` : `Afternoon at ${parkName}`,
       contextLabel: parkName,
-      location: parkSpot,
+      location: parkNamedPlace ? { lat: parkNamedPlace.lat, lng: parkNamedPlace.lng } : parkSpot,
       kind: 'park',
       dwellTicks: 40,
     },
     {
       timeLabel: '7:00 PM',
-      activityLabel: 'Dinner out',
-      contextLabel: `${neighborhoodName} · Restaurant`,
-      location: eveningSpot,
+      activityLabel: dinnerNamedPlace ? `Dinner at ${dinnerNamedPlace.name}` : 'Dinner out',
+      contextLabel: dinnerNamedPlace ? `${neighborhoodName} · ${dinnerNamedPlace.name}` : `${neighborhoodName} · Restaurant`,
+      location: dinnerNamedPlace ? { lat: dinnerNamedPlace.lat, lng: dinnerNamedPlace.lng } : eveningSpot,
       kind: 'social',
       dwellTicks: 25,
     },
@@ -263,9 +307,10 @@ export function buildWeekSchedule(
   parks: string[],
   month: number,
   neighborhoodName: string,
+  namedPlaces?: EntertainmentPlace[],
 ): DayEvent[] {
   return [
-    ...buildDailySchedule(profile, homeCoords, workCoords, neighborhoodCenter, parks, month, neighborhoodName),
-    ...buildWeekendSchedule(profile, homeCoords, neighborhoodCenter, parks, month, neighborhoodName),
+    ...buildDailySchedule(profile, homeCoords, workCoords, neighborhoodCenter, parks, month, neighborhoodName, namedPlaces),
+    ...buildWeekendSchedule(profile, homeCoords, neighborhoodCenter, parks, month, neighborhoodName, namedPlaces),
   ]
 }

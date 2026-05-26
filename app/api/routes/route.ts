@@ -1,11 +1,10 @@
 import { NextResponse } from "next/server";
-import { computeGoogleRouteOptions } from "@/lib/googleMaps";
+import { computeLocalRouteOptions } from "@/lib/routeOptions";
 import {
   jsonError,
   RATE_LIMITS,
-  rateLimitRequest,
+  rateLimitPublicRequest,
   rejectOversizedRequest,
-  requireApiUser,
 } from "@/lib/apiSecurity";
 import type { MapPoint, UserProfile } from "@/lib/tools/types";
 
@@ -34,11 +33,10 @@ function parseModes(value: unknown): UserProfile["commutePref"][] {
   return parsed.length > 0 ? [...new Set(parsed)] : [...MODES];
 }
 
+// Public read-only route: computes local/free route geometry for map display.
+// It does not persist user coordinates or call paid routing APIs.
 export async function POST(request: Request) {
-  const authResult = await requireApiUser();
-  if (!authResult.ok) return authResult.response;
-
-  const rateLimited = rateLimitRequest(request, authResult.userId, RATE_LIMITS.lookup);
+  const rateLimited = await rateLimitPublicRequest(request, RATE_LIMITS.lookup);
   if (rateLimited) return rateLimited;
 
   const tooLarge = rejectOversizedRequest(request);
@@ -56,6 +54,6 @@ export async function POST(request: Request) {
   if (!isPoint(record.origin)) return jsonError("origin must include valid lat/lng", 400);
   if (!isPoint(record.destination)) return jsonError("destination must include valid lat/lng", 400);
 
-  const options = await computeGoogleRouteOptions(record.origin, record.destination, parseModes(record.modes));
+  const options = await computeLocalRouteOptions(record.origin, record.destination, parseModes(record.modes));
   return NextResponse.json({ options });
 }

@@ -1,0 +1,145 @@
+[
+  {
+    "id": "hyde-park-medici",
+    "name": "Medici on 57th",
+    "category": "food",
+    "neighborhood": "Hyde Park",
+    "address": "1327 E 57th St",
+    "lat": 41.79146,
+    "lng": -87.59395,
+    "source": "local seed",
+    "description": "Long-running neighborhood restaurant and bakery."
+  },
+  {
+    "id": "hyde-park-valois",
+    "name": "Valois Restaurant",
+    "category": "food",
+    "neighborhood": "Hyde Park",
+    "address": "1518 E 53rd St",
+    "lat": 41.79977,
+    "lng": -87.58861,
+    "source": "local seed",
+    "description": "Counter-service diner on the 53rd Street corridor."
+  },
+  {
+    "id": "hyde-park-promontory",
+    "name": "The Promontory",
+    "category": "bar",
+    "neighborhood": "Hyde Park",
+    "address": "5311 S Lake Park Ave W",
+    "lat": 41.79943,
+    "lng": -87.58809,
+    "source": "local seed",
+    "description": "Restaurant, bar, and music venue."
+  },
+  {
+    "id": "hyde-park-smart-museum",
+    "name": "Smart Museum of Art",
+    "category": "civic",
+    "neighborhood": "Hyde Park",
+    "address": "5550 S Greenwood Ave",
+    "lat": 41.79325,
+    "lng": -87.60098,
+    "source": "local seed",
+    "description": "University art museum open to the public."
+  },
+  {
+    "id": "hyde-park-nichols-park",
+    "name": "Nichols Park",
+    "category": "park",
+    "neighborhood": "Hyde Park",
+    "address": "1355 E 53rd St",
+    "lat": 41.79948,
+    "lng": -87.59369,
+    "source": "local seed",
+    "description": "Community park near the commercial corridor."
+  },
+  {
+    "id": "hyde-park-57th-st-books",
+    "name": "57th Street Books",
+    "category": "entertainment",
+    "neighborhood": "Hyde Park",
+    "address": "1301 E 57th St",
+    "lat": 41.79158,
+    "lng": -87.59521,
+    "source": "local seed",
+    "description": "Independent bookstore and neighborhood gathering spot."
+  },
+  {
+    "id": "washington-park-dusable",
+    "name": "DuSable Black History Museum",
+    "category": "civic",
+    "neighborhood": "Washington Park",
+    "address": "740 E 56th Pl",
+    "lat": 41.79251,
+    "lng": -87.60724,
+    "source": "local seed",
+    "description": "Museum and cultural institution at the east edge of Washington Park."
+  },
+  {
+    "id": "washington-park-fieldhouse",
+    "name": "Washington Park Fieldhouse",
+    "category": "park",
+    "neighborhood": "Washington Park",
+    "address": "5531 S King Dr",
+    "lat": 41.79347,
+    "lng": -87.61509,
+    "source": "local seed",
+    "description": "Park district fieldhouse and recreation anchor."
+  },
+  {
+    "id": "washington-park-fountain-of-time",
+    "name": "Fountain of Time",
+    "category": "entertainment",
+    "neighborhood": "Washington Park",
+    "address": "5900 S Cottage Grove Ave",
+    "lat": 41.7876,
+    "lng": -87.60679,
+    "source": "local seed",
+    "description": "Major public artwork near Midway Plaisance."
+  },
+  {
+    "id": "washington-park-currency-exchange-cafe",
+    "name": "Currency Exchange Cafe",
+    "category": "food",
+    "neighborhood": "Washington Park",
+    "address": "305 E Garfield Blvd",
+    "lat": 41.7943,
+    "lng": -87.61756,
+    "source": "local seed",
+    "description": "Cafe near Garfield Boulevard."
+  },
+  {
+    "id": "kenwood-little-black-pearl",
+    "name": "Little Black Pearl",
+    "category": "civic",
+    "neighborhood": "Kenwood",
+    "address": "1060 E 47th St",
+    "lat": 41.80936,
+    "lng": -87.60015,
+    "source": "local seed",
+    "description": "Arts and design center near the 47th Street corridor."
+  },
+  {
+    "id": "kenwood-mandela-foods",
+    "name": "Mandela Foods",
+    "category": "food",
+    "neighborhood": "Kenwood",
+    "address": "4600 S Drexel Blvd",
+    "lat": 41.81101,
+    "lng": -87.60402,
+    "source": "local seed",
+    "description": "Local food stop near Drexel Boulevard."
+  },
+  {
+    "id": "kenwood-kenwood-park",
+    "name": "Kenwood Community Park",
+    "category": "park",
+    "neighborhood": "Kenwood",
+    "address": "1330 E 50th St",
+    "lat": 41.80357,
+    "lng": -87.59473,
+    "source": "local seed",
+    "description": "Neighborhood green space."
+  }
+]

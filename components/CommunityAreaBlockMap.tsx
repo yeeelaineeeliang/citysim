@@ -3,8 +3,6 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   Banknote,
-  BarChart3,
-  ListChecks,
   ShieldAlert,
   TrainFront,
   Utensils,
@@ -14,12 +12,11 @@ import {
   GeoJSON as GeoJSONLayer,
   MapContainer,
   Marker,
+  Polyline,
   Popup,
   TileLayer,
   Tooltip,
-  ZoomControl,
   useMap,
-  useMapEvents,
 } from "react-leaflet";
 import L from "leaflet";
 import {
@@ -55,6 +52,7 @@ interface CommunityAreaBlockMapProps {
 
 type PreviewTone = "good" | "neutral" | "caution" | "unknown";
 type PreviewCommuteTone = Exclude<PreviewTone, "unknown"> | "unavailable";
+type MapPoint = { lat: number; lng: number };
 
 interface CommunityAreaPreviewRankItem {
   rank: number | null;
@@ -111,12 +109,10 @@ const AREA_PALETTE = [
   { fill: "#f0ddbf", stroke: "#b9874d" },
 ];
 
+const RANK_COLORS = ["#C76545", "#D09B36", "#4F6F45", "#5F9085", "#BD7471"];
+
 const INITIAL_AREAS = getFallbackCommunityAreas();
 const previewCache = new Map<string, CommunityAreaPreview>();
-
-function areaCenter(area: CommunityAreaMapArea): [number, number] {
-  return [area.lat, area.lng];
-}
 
 function areaBounds(area: CommunityAreaMapArea): L.LatLngBounds {
   if (area.boundaryGeojson) {
@@ -138,7 +134,7 @@ function areasBounds(areas: CommunityAreaMapArea[]): L.LatLngBounds | null {
   return bounds;
 }
 
-function distanceMiles(a: { lat: number; lng: number }, b: { lat: number; lng: number }): number {
+function distanceMiles(a: MapPoint, b: MapPoint): number {
   const radiusMiles = 3958.8;
   const dLat = ((b.lat - a.lat) * Math.PI) / 180;
   const dLng = ((b.lng - a.lng) * Math.PI) / 180;
@@ -153,14 +149,37 @@ function distanceMiles(a: { lat: number; lng: number }, b: { lat: number; lng: n
   return radiusMiles * 2 * Math.asin(Math.sqrt(h));
 }
 
+function rankBadgePosition(
+  area: CommunityAreaMapArea,
+  rank?: number,
+  workplaceCoords?: MapPoint | null,
+): [number, number] {
+  const bounds = areaBounds(area);
+  const center = bounds.isValid() ? bounds.getCenter() : L.latLng(area.lat, area.lng);
+  let lat = center.lat;
+  let lng = center.lng;
+
+  if (rank === 4) {
+    lng -= 0.018;
+  }
+
+  if (workplaceCoords && distanceMiles(center, workplaceCoords) <= 0.55) {
+    lat += 0.0045;
+    lng -= 0.0045;
+  }
+  return [lat, lng];
+}
+
 function extendWithNearbyWorkplace(
   bounds: L.LatLngBounds,
   area: CommunityAreaMapArea,
-  workplaceCoords?: { lat: number; lng: number } | null,
+  workplaceCoords?: MapPoint | null,
+  workplaceCalloutCoords?: [number, number] | null,
 ): L.LatLngBounds {
   if (!workplaceCoords) return bounds;
   if (distanceMiles(area, workplaceCoords) <= 4.5) {
     bounds.extend([workplaceCoords.lat, workplaceCoords.lng]);
+    if (workplaceCalloutCoords) bounds.extend(workplaceCalloutCoords);
   }
   return bounds;
 }
@@ -175,10 +194,14 @@ function escapeHtml(value: string) {
 }
 
 function rankColor(rank?: number) {
-  if (rank === 1) return COLORS.terracotta;
-  if (rank === 2) return COLORS.amber;
-  if (rank === 3) return COLORS.sage;
-  return COLORS.sageStrong;
+  if (!rank || rank < 1) return COLORS.sageStrong;
+  return RANK_COLORS[rank - 1] ?? RANK_COLORS[RANK_COLORS.length - 1] ?? COLORS.sageStrong;
+}
+
+function mapLabelName(name: string) {
+  return name
+    .replace(/\bSquare\b/g, "Sq.")
+    .replace(/\bPark\b/g, "Pk.");
 }
 
 function getAreaColor(communityAreaNumber: number) {
@@ -201,23 +224,24 @@ function areaStyle({
   matchRank?: number;
   dimmed?: boolean;
 }) {
-  const stateColor = searched ? COLORS.amber : matchRank ? rankColor(matchRank) : areaColor.stroke;
+  const matchColor = matchRank ? rankColor(matchRank) : null;
+  const stateColor = searched ? COLORS.amber : matchColor ?? areaColor.stroke;
   if (dimmed && !selected && !hovered && !searched) {
     return {
       color: COLORS.dimStroke,
       fillColor: COLORS.dimFill,
       fillOpacity: 0.24,
       opacity: 0.34,
-      weight: 1.1,
+      weight: 0.7,
     };
   }
 
   return {
-    color: selected ? COLORS.terracotta : hovered || searched || matchRank ? stateColor : areaColor.stroke,
-    fillColor: areaColor.fill,
-    fillOpacity: selected ? 0.94 : hovered ? 0.9 : searched ? 0.86 : matchRank ? 0.82 : 0.72,
+    color: selected ? stateColor : hovered || searched || matchRank ? stateColor : areaColor.stroke,
+    fillColor: matchColor ?? areaColor.fill,
+    fillOpacity: selected ? 0.42 : hovered ? 0.34 : searched ? 0.32 : matchRank ? 0.28 : 0.72,
     opacity: selected || hovered || searched || matchRank ? 0.95 : 0.78,
-    weight: selected ? 4 : searched ? 3 : hovered || matchRank ? 2.5 : 1.4,
+    weight: selected ? 2.5 : searched ? 2 : hovered || matchRank ? 1.75 : 0.9,
   };
 }
 
@@ -226,7 +250,7 @@ const cityOutlineStyle = {
   fillColor: COLORS.cream,
   fillOpacity: 0,
   opacity: 0.92,
-  weight: 5,
+  weight: 3.25,
   dashArray: "0",
 };
 
@@ -254,87 +278,100 @@ function geoJsonFeatures(
   ];
 }
 
-function rankIcon(match: CommunityAreaMapMatch) {
+function rankBadgeIcon(match: CommunityAreaMapMatch, selected: boolean) {
   const color = rankColor(match.rank);
   return L.divIcon({
-    className: "",
+    className: "community-area-rank-badge-marker",
     html: `<div style="
       display:flex;align-items:center;justify-content:center;
-      width:28px;height:28px;border-radius:999px;
-      background:${color};border:2px solid ${COLORS.cream};
-      color:white;font:800 12px/1 'Avenir Next','Segoe UI Rounded',system-ui,sans-serif;
-      box-shadow:0 5px 14px rgba(38,49,38,0.26);
-    ">${match.rank}</div>`,
-    iconSize: [28, 28],
-    iconAnchor: [14, 14],
-  });
-}
-
-function areaNameIcon(name: string, variant: "selected" | "match" | "search" | "standard") {
-  const background =
-    variant === "selected"
-      ? "rgba(255,249,238,0.98)"
-      : variant === "match"
-        ? "rgba(255,249,238,0.92)"
-        : variant === "search"
-          ? "rgba(255,246,217,0.94)"
-          : "rgba(255,249,238,0.72)";
-  const border =
-    variant === "selected"
-      ? COLORS.terracotta
-      : variant === "match"
-        ? COLORS.sageStrong
-        : variant === "search"
-          ? COLORS.amber
-          : "rgba(38,49,38,0.16)";
-  const color = variant === "standard" ? "rgba(38,49,38,0.74)" : COLORS.ink;
-  const shadow = variant === "standard" ? "none" : "0 6px 16px rgba(38,49,38,0.18)";
-
-  return L.divIcon({
-    className: "community-area-label-marker",
-    html: `<div style="
-      transform:translate(-50%,-50%);
-      max-width:118px;
-      overflow:hidden;
-      text-overflow:ellipsis;
-      white-space:nowrap;
-      border:1px solid ${border};
-      border-radius:999px;
-      background:${background};
-      color:${color};
-      padding:5px 8px;
-      font:800 10px/1.1 'Avenir Next','Segoe UI Rounded',system-ui,sans-serif;
-      box-shadow:${shadow};
-    ">${escapeHtml(name)}</div>`,
-    iconSize: [118, 24],
-    iconAnchor: [59, 12],
+      width:176px;height:40px;
+    ">
+      <div style="
+        display:inline-flex;align-items:center;gap:7px;max-width:168px;
+        border:${selected ? 2 : 1.5}px solid ${color};
+        border-radius:999px;background:rgba(255,249,238,0.97);
+        color:${COLORS.ink};padding:4px 10px 4px 4px;
+        box-shadow:${selected ? "0 6px 16px rgba(38,49,38,0.22)" : "0 4px 12px rgba(38,49,38,0.16)"};
+        font-family:'Avenir Next','Segoe UI Rounded',system-ui,sans-serif;
+      ">
+        <span style="
+          display:flex;align-items:center;justify-content:center;flex:0 0 auto;
+          width:28px;height:28px;border-radius:999px;background:${color};
+          color:white;font-size:12px;font-weight:850;line-height:1;
+        ">${match.rank}</span>
+        <span style="
+          min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+          font-size:12px;font-weight:850;line-height:1.1;
+        ">${escapeHtml(mapLabelName(match.name))}</span>
+      </div>
+    </div>`,
+    iconSize: [176, 40],
+    iconAnchor: [88, 20],
   });
 }
 
 function workplaceIcon() {
   return L.divIcon({
-    className: "",
+    className: "community-area-workplace-dot-marker",
     html: `<div style="
-      display:flex;align-items:center;gap:6px;
-      transform:translateY(-50%);
-      white-space:nowrap;
-      filter:drop-shadow(0 2px 7px rgba(38,49,38,0.28));
-    ">
-      <div style="
-        width:16px;height:16px;border-radius:999px;
-        background:${COLORS.terracotta};border:3px solid ${COLORS.cream};
-        box-shadow:0 0 0 2px rgba(199,101,69,0.32);
-      "></div>
-      <div style="
-        border:1px solid rgba(199,101,69,0.26);
-        border-radius:999px;background:rgba(255,249,238,0.97);
-        color:${COLORS.ink};padding:5px 8px;
-        font:800 12px/1 'Avenir Next','Segoe UI Rounded',system-ui,sans-serif;
-      ">Anchor</div>
-    </div>`,
-    iconSize: [130, 28],
-    iconAnchor: [8, 14],
+      width:14px;height:14px;border-radius:999px;
+      background:${COLORS.terracotta};border:2px solid ${COLORS.cream};
+      box-shadow:0 0 0 2px rgba(199,101,69,0.24),0 4px 10px rgba(38,49,38,0.22);
+    "></div>`,
+    iconSize: [14, 14],
+    iconAnchor: [7, 7],
   });
+}
+
+function cleanWorkplaceLabel(name?: string) {
+  const trimmed = name?.trim();
+  if (!trimmed) return "Workplace";
+  const withoutCity = trimmed.replace(/,\s*Chicago(?:,\s*(?:IL|Illinois))?$/i, "").trim();
+  if (/university of chicago/i.test(withoutCity)) return "UChicago";
+  if (!withoutCity || /^anchor$/i.test(withoutCity)) return "Workplace";
+  return withoutCity.length > 24 ? `${withoutCity.slice(0, 21).trim()}...` : withoutCity;
+}
+
+function workplaceCalloutIcon(label: string) {
+  return L.divIcon({
+    className: "community-area-workplace-callout-marker",
+    html: `<div style="
+      display:flex;align-items:center;justify-content:center;
+      min-width:86px;max-width:154px;height:30px;padding:0 12px;
+      border:1.5px solid ${COLORS.terracotta};border-radius:999px;
+      background:rgba(255,249,238,0.98);color:${COLORS.ink};
+      box-shadow:0 5px 14px rgba(38,49,38,0.18);
+      font-family:'Avenir Next','Segoe UI Rounded',system-ui,sans-serif;
+      font-size:12px;font-weight:850;line-height:1;white-space:nowrap;
+      overflow:hidden;text-overflow:ellipsis;
+    ">${escapeHtml(label)}</div>`,
+    iconSize: [132, 30],
+    iconAnchor: [66, 15],
+  });
+}
+
+function workplaceCalloutPosition({
+  workplaceCoords,
+  rankedLabels,
+  selectedArea,
+}: {
+  workplaceCoords: MapPoint;
+  rankedLabels: { area: CommunityAreaMapArea; match: CommunityAreaMapMatch }[];
+  selectedArea: CommunityAreaMapArea | null;
+}): [number, number] {
+  const badgePoints = rankedLabels.map(({ area, match }) => rankBadgePosition(area, match.rank, workplaceCoords));
+  const selectedHasBadge = rankedLabels.some(
+    ({ area }) => selectedArea?.communityAreaNumber === area.communityAreaNumber,
+  );
+  if (selectedArea && !selectedHasBadge) {
+    badgePoints.push(rankBadgePosition(selectedArea, undefined, workplaceCoords));
+  }
+
+  const isNearBadge = badgePoints.some(([lat, lng]) => distanceMiles(workplaceCoords, { lat, lng }) <= 0.75);
+  const offset = isNearBadge
+    ? { lat: -0.0048, lng: 0.0105 }
+    : { lat: 0.0058, lng: 0.0086 };
+  return [workplaceCoords.lat + offset.lat, workplaceCoords.lng + offset.lng];
 }
 
 function descriptorText(area: CommunityAreaMapArea) {
@@ -347,131 +384,130 @@ function FitMap({
   selectedArea,
   matchedAreas,
   workplaceCoords,
+  workplaceCalloutCoords,
 }: {
   areas: CommunityAreaMapArea[];
   focusArea: CommunityAreaMapArea | null;
   selectedArea: CommunityAreaMapArea | null;
   matchedAreas: CommunityAreaMapArea[];
-  workplaceCoords?: { lat: number; lng: number } | null;
+  workplaceCoords?: MapPoint | null;
+  workplaceCalloutCoords?: [number, number] | null;
 }) {
   const map = useMap();
   const focusKey = focusArea?.communityAreaNumber ?? "none";
   const selectedKey = selectedArea?.communityAreaNumber ?? "none";
   const matchKey = matchedAreas.map((area) => area.communityAreaNumber).join(",");
-  const workplaceKey = workplaceCoords ? `${workplaceCoords.lat},${workplaceCoords.lng}` : "none";
+  const workplaceKey = workplaceCoords
+    ? `${workplaceCoords.lat},${workplaceCoords.lng},${workplaceCalloutCoords?.join(",") ?? "none"}`
+    : "none";
 
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => {
       map.invalidateSize();
 
       if (focusArea) {
-        const bounds = extendWithNearbyWorkplace(areaBounds(focusArea), focusArea, workplaceCoords);
-        map.flyToBounds(bounds, { duration: 0.45, padding: [18, 18], maxZoom: 12.5 });
+        const bounds = extendWithNearbyWorkplace(areaBounds(focusArea), focusArea, workplaceCoords, workplaceCalloutCoords);
+        map.flyToBounds(bounds.pad(0.18), {
+          duration: 0.45,
+          paddingTopLeft: [72, 44],
+          paddingBottomRight: [44, 44],
+          maxZoom: 13,
+        });
+        return;
+      }
+
+      if (selectedArea) {
+        const bounds = extendWithNearbyWorkplace(areaBounds(selectedArea), selectedArea, workplaceCoords, workplaceCalloutCoords);
+        map.flyToBounds(bounds.pad(0.18), {
+          duration: 0.45,
+          paddingTopLeft: [72, 44],
+          paddingBottomRight: [44, 44],
+          maxZoom: 13,
+        });
         return;
       }
 
       if (matchedAreas.length) {
         const bounds = areasBounds(matchedAreas);
         if (bounds) {
-          map.fitBounds(bounds, {
-            padding: [20, 20],
-            maxZoom: 12.5,
+          matchedAreas.forEach((area) => extendWithNearbyWorkplace(bounds, area, workplaceCoords, workplaceCalloutCoords));
+          map.fitBounds(bounds.pad(0.16), {
+            paddingTopLeft: [78, 48],
+            paddingBottomRight: [46, 48],
+            maxZoom: 12,
           });
         }
-        return;
-      }
-
-      if (selectedArea) {
-        const bounds = extendWithNearbyWorkplace(areaBounds(selectedArea), selectedArea, workplaceCoords);
-        map.fitBounds(bounds, {
-          padding: [18, 18],
-          maxZoom: 12.5,
-        });
         return;
       }
 
       const bounds = areasBounds(areas);
       if (!bounds) return;
       map.fitBounds(bounds, {
-        padding: [20, 20],
+        padding: [28, 28],
         maxZoom: 10.5,
       });
     });
 
     return () => window.cancelAnimationFrame(frame);
-  }, [areas, focusArea, focusKey, map, matchKey, matchedAreas, selectedArea, selectedKey, workplaceCoords, workplaceKey]);
+  }, [areas, focusArea, focusKey, map, matchKey, matchedAreas, selectedArea, selectedKey, workplaceCalloutCoords, workplaceCoords, workplaceKey]);
 
   return null;
 }
 
-function MapNameLabels({
+function MapZoomControl() {
+  const map = useMap();
+
+  useEffect(() => {
+    const control = L.control.zoom({ position: "bottomleft" });
+    control.addTo(map);
+    return () => {
+      control.remove();
+    };
+  }, [map]);
+
+  return null;
+}
+
+function RankedMatchBadges({
   areas,
   selectedArea,
   matches,
-  searchHitNumbers,
+  workplaceCoords,
+  onSelect,
 }: {
   areas: CommunityAreaMapArea[];
   selectedArea: CommunityAreaMapArea | null;
   matches: CommunityAreaMapMatch[];
-  searchHitNumbers: Set<number>;
+  workplaceCoords?: { lat: number; lng: number } | null;
+  onSelect: (name: string) => void;
 }) {
-  const map = useMapEvents({
-    zoomend: () => {
-      setZoom(map.getZoom());
-      setBounds(map.getBounds());
-    },
-    moveend: () => {
-      setZoom(map.getZoom());
-      setBounds(map.getBounds());
-    },
-  });
-  const [zoom, setZoom] = useState(map.getZoom());
-  const [bounds, setBounds] = useState(() => map.getBounds());
-
-  useEffect(() => {
-    setZoom(map.getZoom());
-    setBounds(map.getBounds());
-  }, [map]);
-
-  const topMatches = useMemo(() => matches.slice(0, 5), [matches]);
-  const topMatchNumbers = useMemo(
-    () => new Set(topMatches.map((match) => match.communityAreaNumber)),
-    [topMatches],
-  );
-  const topMatchNames = useMemo(
-    () => new Set(topMatches.map((match) => match.name.toLowerCase())),
-    [topMatches],
-  );
-
   const labels = useMemo(() => {
-    const viewportLabels = areas.filter((area) => {
-      const selected = selectedArea?.communityAreaNumber === area.communityAreaNumber;
-      const matched = topMatchNumbers.has(area.communityAreaNumber) || topMatchNames.has(area.name.toLowerCase());
-      const searched = searchHitNumbers.has(area.communityAreaNumber);
-
-      if (selected || matched || searched) return true;
-      if (zoom < 12) return false;
-      return bounds.contains(L.latLng(area.lat, area.lng));
-    });
-
-    return viewportLabels.slice(0, 34);
-  }, [areas, bounds, searchHitNumbers, selectedArea, topMatchNames, topMatchNumbers, zoom]);
+    return matches.slice(0, 5)
+      .map((match) => {
+        const area = areas.find(
+          (item) =>
+            item.communityAreaNumber === match.communityAreaNumber ||
+            item.name.toLowerCase() === match.name.toLowerCase(),
+        );
+        return area ? { area, match } : null;
+      })
+      .filter((item): item is { area: CommunityAreaMapArea; match: CommunityAreaMapMatch } => Boolean(item));
+  }, [areas, matches]);
 
   return (
     <>
-      {labels.map((area) => {
-        const selected = selectedArea?.communityAreaNumber === area.communityAreaNumber;
-        const matched = topMatchNumbers.has(area.communityAreaNumber) || topMatchNames.has(area.name.toLowerCase());
-        const searched = searchHitNumbers.has(area.communityAreaNumber);
-        const variant = selected ? "selected" : matched ? "match" : searched ? "search" : "standard";
+      {labels.map(({ area, match }) => {
+        const selected =
+          selectedArea?.communityAreaNumber === area.communityAreaNumber ||
+          selectedArea?.name.toLowerCase() === area.name.toLowerCase();
 
         return (
           <Marker
-            key={`label-${area.communityAreaNumber}`}
-            position={areaCenter(area)}
-            icon={areaNameIcon(area.name, variant)}
-            interactive={false}
-            zIndexOffset={selected ? 980 : matched ? 880 : searched ? 820 : 400}
+            key={`rank-badge-${match.communityAreaNumber}`}
+            position={rankBadgePosition(area, match.rank, workplaceCoords)}
+            icon={rankBadgeIcon(match, selected)}
+            zIndexOffset={selected ? 1080 : 1040}
+            eventHandlers={{ click: () => onSelect(area.name) }}
           />
         );
       })}
@@ -518,10 +554,10 @@ function validPreview(value: unknown): CommunityAreaPreview | null {
 }
 
 function signalToneClass(tone: "good" | "neutral" | "caution" | "unknown") {
-  if (tone === "good") return "border-[color:var(--sage)] bg-[color:var(--sage-100)] text-[color:var(--sage-strong)]";
-  if (tone === "caution") return "border-[color:var(--terracotta)] bg-[color:var(--clay-50)] text-[color:var(--terracotta)]";
-  if (tone === "unknown") return "border-[color:var(--panel-border)] bg-white/58 text-[color:var(--muted)]";
-  return "border-[color:var(--amber)] bg-[rgba(231,173,78,0.16)] text-[color:var(--foreground)]";
+  if (tone === "good") return "border-[color:var(--signal-good-border)] bg-[color:var(--signal-good-bg)] text-[color:var(--signal-good-text)]";
+  if (tone === "caution") return "border-[color:var(--signal-caution-border)] bg-[color:var(--signal-caution-bg)] text-[color:var(--signal-caution-text)]";
+  if (tone === "unknown") return "border-[color:var(--signal-unknown-border)] bg-[color:var(--signal-unknown-bg)] text-[color:var(--signal-unknown-text)]";
+  return "border-[color:var(--signal-mixed-border)] bg-[color:var(--signal-mixed-bg)] text-[color:var(--signal-mixed-text)]";
 }
 
 function commuteMetricTone(tone?: PreviewCommuteTone): PreviewTone {
@@ -534,22 +570,37 @@ function SignalRow({
   label,
   value,
   detail,
+  emphasis = false,
   tone = "neutral",
 }: {
   Icon: LucideIcon;
   label: string;
   value: string;
   detail?: string;
+  emphasis?: boolean;
   tone?: "good" | "neutral" | "caution" | "unknown";
 }) {
+  const rowClass = emphasis
+    ? `grid grid-cols-[34px_minmax(0,1fr)] gap-2.5 rounded-[var(--radius-md)] border-l-[5px] px-3.5 py-3 shadow-sm ${signalToneClass(tone)}`
+    : `grid grid-cols-[30px_minmax(0,1fr)] gap-2 rounded-[var(--radius-md)] border-l-4 px-3 py-2.5 ${signalToneClass(tone)}`;
+  const iconClass = emphasis
+    ? "flex h-8 w-8 items-center justify-center rounded-full bg-white/72 text-sm shadow-sm"
+    : "flex h-7 w-7 items-center justify-center rounded-full bg-white/62 text-sm shadow-sm";
+  const labelClass = emphasis
+    ? "text-xs font-extrabold leading-4 opacity-80"
+    : "text-[11px] font-bold leading-4 opacity-75";
+  const valueClass = emphasis
+    ? "mt-1 text-[15px] font-extrabold leading-5 text-[color:var(--foreground)]"
+    : "mt-1 text-sm font-bold leading-5 text-[color:var(--foreground)]";
+
   return (
-    <div className={`grid grid-cols-[30px_minmax(0,1fr)] gap-2 rounded-[var(--radius-md)] border-l-4 px-3 py-2.5 ${signalToneClass(tone)}`}>
-      <span className="flex h-7 w-7 items-center justify-center rounded-full bg-white/62 text-sm shadow-sm" aria-hidden="true">
+    <div className={rowClass}>
+      <span className={iconClass} aria-hidden="true">
         <Icon size={15} />
       </span>
       <div className="min-w-0">
-        <p className="text-[10px] font-bold leading-3 tracking-[0.04em] opacity-75">{label}</p>
-        <p className="mt-1 text-sm font-bold leading-5 text-[color:var(--foreground)]">{value}</p>
+        <p className={labelClass}>{label}</p>
+        <p className={valueClass}>{value}</p>
         {detail && <p className="mt-0.5 text-[11px] font-semibold leading-4 opacity-78">{detail}</p>}
       </div>
     </div>
@@ -588,7 +639,6 @@ export function CommunityAreaBlockMap({
   const [boundaryStatus, setBoundaryStatus] = useState<"loading" | "ready" | "unavailable">("loading");
   const [preview, setPreview] = useState<CommunityAreaPreview | null>(null);
   const [previewStatus, setPreviewStatus] = useState<"idle" | "loading" | "ready" | "error">("idle");
-  const [showCompare, setShowCompare] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -660,6 +710,31 @@ export function CommunityAreaBlockMap({
     () => areas.filter((area) => Boolean(area.boundaryGeojson)),
     [areas],
   );
+  const badgeSourceAreas = boundaryAreas.length ? boundaryAreas : areas;
+  const rankedLabelAreas = useMemo(() => {
+    return matches.slice(0, 5)
+      .map((match) => {
+        const area = badgeSourceAreas.find(
+          (item) =>
+            item.communityAreaNumber === match.communityAreaNumber ||
+            item.name.toLowerCase() === match.name.toLowerCase(),
+        );
+        return area ? { area, match } : null;
+      })
+      .filter((item): item is { area: CommunityAreaMapArea; match: CommunityAreaMapMatch } => Boolean(item));
+  }, [badgeSourceAreas, matches]);
+  const workplaceCalloutCoords = useMemo(
+    () =>
+      workplaceCoords
+        ? workplaceCalloutPosition({
+            workplaceCoords,
+            rankedLabels: rankedLabelAreas,
+            selectedArea: selectedArea ?? null,
+          })
+        : null,
+    [rankedLabelAreas, selectedArea, workplaceCoords],
+  );
+  const workplaceCalloutLabel = useMemo(() => cleanWorkplaceLabel(workplaceName), [workplaceName]);
   const cityBoundaryData = useMemo<GeoJSON.FeatureCollection<GeoJSON.Geometry> | null>(() => {
     const features = boundaryAreas.flatMap((area) => geoJsonFeatures(area.boundaryGeojson));
     return features.length
@@ -669,9 +744,6 @@ export function CommunityAreaBlockMap({
         }
       : null;
   }, [boundaryAreas]);
-  const selectedMatch =
-    matchByArea.byNumber.get(selectedArea?.communityAreaNumber ?? -1) ??
-    matchByArea.byName.get(selectedArea?.name.toLowerCase() ?? "");
   const selectedDescriptors = selectedArea ? descriptorText(selectedArea) : "";
   const showSearchHits =
     searchHits.length > 0 && normalizedQuery !== selectedArea?.name.toLowerCase();
@@ -757,150 +829,21 @@ export function CommunityAreaBlockMap({
 
   return (
     <div className="grid h-full min-h-[560px] gap-4 xl:grid-cols-[minmax(0,1fr)_320px] 2xl:grid-cols-[minmax(0,1fr)_340px]">
-      <div className="atlas-map-shell relative h-full min-h-[560px] overflow-hidden rounded-[var(--radius-lg)] border border-[color:var(--panel-border)] bg-[color:var(--sage-50)] shadow-sm">
-        <MapContainer
-          center={[41.878, -87.69]}
-          zoom={10}
-          className="h-full min-h-[560px] w-full"
-          zoomControl={false}
-          zoomSnap={0.25}
-          zoomDelta={0.5}
-          scrollWheelZoom
-        >
-          <ZoomControl position="bottomleft" />
-          <TileLayer
-            url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-            attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
-            opacity={0.42}
-          />
-          <FitMap
-            areas={areas}
-            focusArea={focusArea}
-            selectedArea={selectedArea ?? null}
-            matchedAreas={mode === "match" ? matchedAreas : []}
-            workplaceCoords={workplaceCoords}
-          />
-
-          {cityBoundaryData && (
-            <GeoJSONLayer
-              key="city-outline-real-boundaries"
-              data={cityBoundaryData}
-              interactive={false}
-              style={() => cityOutlineStyle}
-            />
-          )}
-
-          {boundaryAreas.map((area) => {
-            const match = matchByArea.byNumber.get(area.communityAreaNumber) ?? matchByArea.byName.get(area.name.toLowerCase());
-            const selected = selectedArea?.communityAreaNumber === area.communityAreaNumber;
-            const hovered = hoveredArea === area.communityAreaNumber;
-            const searched = searchHitNumbers.has(area.communityAreaNumber);
-            const dimmed = mode === "match" && matches.length > 0 && !match;
-            const style = areaStyle({
-              areaColor: getAreaColor(area.communityAreaNumber),
-              selected,
-              hovered,
-              searched,
-              matchRank: match?.rank,
-              dimmed,
-            });
-            const eventHandlers = {
-              click: () => onSelect(area.name),
-              mouseover: () => setHoveredArea(area.communityAreaNumber),
-              mouseout: () => setHoveredArea(null),
-            };
-
-            return (
-              <GeoJSONLayer
-                key={`${area.communityAreaNumber}-${selected}-${hovered}-${searched}-${match?.rank ?? 0}`}
-                data={area.boundaryGeojson as GeoJSON.GeoJsonObject}
-                style={() => style}
-                eventHandlers={eventHandlers}
-              >
-                <Tooltip sticky direction="top" opacity={0.96}>
-                  <span className="text-xs font-bold text-[#263126]">{area.name}</span>
-                </Tooltip>
-                <Popup>
-                  <div className="min-w-[180px] text-xs text-[#263126]">
-                    <p className="font-bold">{area.name}</p>
-                    {descriptorText(area) && <p className="mt-1 text-[#66715f]">{descriptorText(area)}</p>}
-                    <button
-                      type="button"
-                      onClick={() => onSelect(area.name)}
-                      className="mt-2 rounded-[var(--radius-sm)] bg-[color:var(--sage)] px-3 py-1.5 text-xs font-bold text-white"
-                    >
-                      Select
-                    </button>
-                  </div>
-                </Popup>
-              </GeoJSONLayer>
-            );
-          })}
-
-          <MapNameLabels
-            areas={boundaryAreas.length ? boundaryAreas : areas}
-            selectedArea={selectedArea ?? null}
-            matches={matches}
-            searchHitNumbers={searchHitNumbers}
-          />
-
-          {matches.map((match) => {
-            const area = areas.find(
-              (item) =>
-                item.communityAreaNumber === match.communityAreaNumber ||
-                item.name.toLowerCase() === match.name.toLowerCase(),
-            );
-            if (!area) return null;
-            return (
-              <Marker
-                key={`rank-${match.communityAreaNumber}`}
-                position={areaCenter(area)}
-                icon={rankIcon(match)}
-                eventHandlers={{ click: () => onSelect(area.name) }}
-              >
-                <Tooltip direction="top" offset={[0, -14]} opacity={1}>
-                  <span className="text-xs font-bold text-[#263126]">{match.name}</span>
-                </Tooltip>
-              </Marker>
-            );
-          })}
-
-          {workplaceCoords && (
-            <Marker position={[workplaceCoords.lat, workplaceCoords.lng]} icon={workplaceIcon()}>
-              <Popup>
-                <span className="text-xs font-semibold">{workplaceName ?? "Anchor"}</span>
-              </Popup>
-            </Marker>
-          )}
-        </MapContainer>
-
-        {boundaryStatus !== "ready" && boundaryAreas.length === 0 && (
-          <div className="pointer-events-none absolute inset-x-4 top-24 z-[850] flex justify-center">
-            <div className="max-w-sm rounded-[var(--radius-lg)] border border-[color:var(--panel-border)] bg-[rgba(255,249,238,0.95)] p-4 text-center shadow-[var(--shadow)] backdrop-blur">
-              <p className="text-sm font-bold text-[color:var(--foreground)]">
-                {boundaryStatus === "loading"
-                  ? "Loading Chicago community-area boundaries..."
-                  : "Neighborhood boundaries are unavailable right now."}
-              </p>
-              {boundaryStatus === "unavailable" && (
-                <p className="mt-1 text-xs font-semibold leading-5 text-[color:var(--muted)]">
-                  Search and selection are still available, but the map will wait for real boundary data.
-                </p>
-              )}
-            </div>
-          </div>
-        )}
-
-        <div className="pointer-events-none absolute left-3 right-3 top-3 z-[800] sm:left-4 sm:right-auto sm:w-[min(360px,calc(100%-2rem))]">
-          <div className="pointer-events-auto rounded-[var(--radius-lg)] border border-white/70 bg-[rgba(255,249,238,0.94)] p-2 shadow-[var(--shadow)] backdrop-blur">
+      <div className="flex h-full min-h-[560px] min-w-0 flex-col gap-3">
+        <div className="relative z-[900] rounded-[var(--radius-md)] border border-[color:var(--panel-border)] bg-[rgba(255,249,238,0.82)] p-2 shadow-sm backdrop-blur sm:flex sm:items-center sm:gap-3">
+          <label htmlFor="community-area-search" className="mb-1 block px-1 text-xs font-bold text-[color:var(--muted)] sm:mb-0 sm:shrink-0">
+            Search map
+          </label>
+          <div className="relative min-w-0 flex-1">
             <input
+              id="community-area-search"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search the map"
-              className="atlas-input w-full px-3 py-2 text-sm"
+              placeholder="Search community areas"
+              className="atlas-input h-9 w-full px-3 text-sm"
             />
             {showSearchHits && (
-              <div className="mt-2 grid gap-1">
+              <div className="absolute left-0 right-0 top-[calc(100%+0.35rem)] z-[920] grid gap-1 rounded-[var(--radius-md)] border border-[color:var(--panel-border)] bg-[rgba(255,249,238,0.98)] p-1.5 shadow-[var(--shadow)]">
                 {searchHits.slice(0, 4).map((area) => (
                   <button
                     key={area.communityAreaNumber}
@@ -918,16 +861,149 @@ export function CommunityAreaBlockMap({
             )}
           </div>
         </div>
+
+        <div className="atlas-map-shell relative min-h-0 flex-1 overflow-hidden rounded-[var(--radius-lg)] border border-[color:var(--panel-border)] bg-[color:var(--sage-50)] shadow-sm">
+          <MapContainer
+            center={[41.878, -87.69]}
+            zoom={10}
+            className="h-full min-h-[500px] w-full"
+            zoomControl={false}
+            zoomSnap={0.25}
+            zoomDelta={0.5}
+            scrollWheelZoom
+          >
+            <MapZoomControl />
+            <TileLayer
+              url="https://{s}.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}{r}.png"
+              attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>'
+              opacity={0.78}
+            />
+            <FitMap
+              areas={areas}
+              focusArea={focusArea}
+              selectedArea={selectedArea ?? null}
+              matchedAreas={mode === "match" ? matchedAreas : []}
+              workplaceCoords={workplaceCoords}
+              workplaceCalloutCoords={workplaceCalloutCoords}
+            />
+
+            {cityBoundaryData && (
+              <GeoJSONLayer
+                key="city-outline-real-boundaries"
+                data={cityBoundaryData}
+                interactive={false}
+                style={() => cityOutlineStyle}
+              />
+            )}
+
+            {boundaryAreas.map((area) => {
+              const match = matchByArea.byNumber.get(area.communityAreaNumber) ?? matchByArea.byName.get(area.name.toLowerCase());
+              const selected = selectedArea?.communityAreaNumber === area.communityAreaNumber;
+              const hovered = hoveredArea === area.communityAreaNumber;
+              const searched = searchHitNumbers.has(area.communityAreaNumber);
+              const dimmed = mode === "match" && matches.length > 0 && !match;
+              const style = areaStyle({
+                areaColor: getAreaColor(area.communityAreaNumber),
+                selected,
+                hovered,
+                searched,
+                matchRank: match?.rank,
+                dimmed,
+              });
+              const eventHandlers = {
+                click: () => onSelect(area.name),
+                mouseover: () => setHoveredArea(area.communityAreaNumber),
+                mouseout: () => setHoveredArea(null),
+              };
+
+              return (
+                <GeoJSONLayer
+                  key={`${area.communityAreaNumber}-${selected}-${hovered}-${searched}-${match?.rank ?? 0}`}
+                  data={area.boundaryGeojson as GeoJSON.GeoJsonObject}
+                  style={() => style}
+                  eventHandlers={eventHandlers}
+                >
+                  {mode !== "match" && (
+                    <Tooltip sticky direction="top" opacity={0.96}>
+                      <span className="text-xs font-bold text-[#263126]">{area.name}</span>
+                    </Tooltip>
+                  )}
+                  <Popup>
+                    <div className="min-w-[180px] text-xs text-[#263126]">
+                      <p className="font-bold">{area.name}</p>
+                      {descriptorText(area) && <p className="mt-1 text-[#66715f]">{descriptorText(area)}</p>}
+                      <button
+                        type="button"
+                        onClick={() => onSelect(area.name)}
+                        className="mt-2 rounded-[var(--radius-sm)] bg-[color:var(--sage)] px-3 py-1.5 text-xs font-bold text-white"
+                      >
+                        Select
+                      </button>
+                    </div>
+                  </Popup>
+                </GeoJSONLayer>
+              );
+            })}
+
+            <RankedMatchBadges
+              areas={badgeSourceAreas}
+              selectedArea={selectedArea ?? null}
+              matches={matches}
+              workplaceCoords={workplaceCoords}
+              onSelect={onSelect}
+            />
+
+            {workplaceCoords && workplaceCalloutCoords && (
+              <>
+                <Polyline
+                  positions={[[workplaceCoords.lat, workplaceCoords.lng], workplaceCalloutCoords]}
+                  pathOptions={{
+                    color: COLORS.terracotta,
+                    opacity: 0.68,
+                    weight: 1.2,
+                    dashArray: "3 4",
+                  }}
+                  interactive={false}
+                />
+                <Marker
+                  position={workplaceCalloutCoords}
+                  icon={workplaceCalloutIcon(workplaceCalloutLabel)}
+                  interactive={false}
+                  zIndexOffset={1220}
+                />
+                <Marker position={[workplaceCoords.lat, workplaceCoords.lng]} icon={workplaceIcon()} zIndexOffset={1300}>
+                  <Popup>
+                    <span className="text-xs font-semibold">{workplaceName ?? "Workplace"}</span>
+                  </Popup>
+                </Marker>
+              </>
+            )}
+          </MapContainer>
+
+          {boundaryStatus !== "ready" && boundaryAreas.length === 0 && (
+            <div className="pointer-events-none absolute inset-x-4 top-6 z-[850] flex justify-center">
+              <div className="max-w-sm rounded-[var(--radius-lg)] border border-[color:var(--panel-border)] bg-[rgba(255,249,238,0.95)] p-4 text-center shadow-[var(--shadow)] backdrop-blur">
+                <p className="text-sm font-bold text-[color:var(--foreground)]">
+                  {boundaryStatus === "loading"
+                    ? "Loading Chicago community-area boundaries..."
+                    : "Neighborhood boundaries are unavailable right now."}
+                </p>
+                {boundaryStatus === "unavailable" && (
+                  <p className="mt-1 text-xs font-semibold leading-5 text-[color:var(--muted)]">
+                    Search and selection are still available, but the map will wait for real boundary data.
+                  </p>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
       </div>
 
-      <aside className="atlas-card flex h-full min-h-[560px] flex-col overflow-hidden p-4">
-        <div className="min-h-0 flex-1 overflow-y-auto pr-1">
+      <aside className="atlas-card h-full min-h-[560px] overflow-hidden p-4">
+        <div className="h-full overflow-y-auto pr-1">
           <div className="grid gap-4">
           <div>
-            <p className="atlas-kicker text-[color:var(--muted)]">
-              {mode === "match" ? "Selected match" : "Selected community area"}
-            </p>
-            <h3 className="mt-2 text-2xl font-semibold leading-tight text-[color:var(--foreground)]">
+            <h3 className="text-2xl font-semibold leading-tight text-[color:var(--foreground)]">
               {selectedArea?.name ?? "Choose a community area"}
             </h3>
             {selectedDescriptors && (
@@ -950,11 +1026,11 @@ export function CommunityAreaBlockMap({
 
           {previewStatus === "ready" && preview && (
             <div className="grid gap-3">
-              <div className={`rounded-[var(--radius-md)] border-l-4 px-3 py-3 ${signalToneClass(preview.verdict?.tone ?? preview.rank?.overall.tone ?? "neutral")}`}>
-                <p className="text-[10px] font-bold leading-3 tracking-[0.04em] opacity-75">
+              <div className={`rounded-[var(--radius-md)] border border-l-[6px] px-4 py-4 shadow-sm ${signalToneClass(preview.verdict?.tone ?? preview.rank?.overall.tone ?? "neutral")}`}>
+                <p className="atlas-kicker text-[11px] font-semibold leading-4 text-[color:var(--muted)] opacity-85">
                   Fit verdict
                 </p>
-                <p className="mt-1 text-sm font-bold leading-5 text-[color:var(--foreground)]">
+                <p className="mt-1.5 text-base font-extrabold leading-6 text-[color:var(--foreground)]">
                   {preview.verdict?.label ?? preview.rank?.overall.label ?? preview.fitLine}
                 </p>
               </div>
@@ -966,104 +1042,24 @@ export function CommunityAreaBlockMap({
                   value={preview.commute.label}
                   detail={preview.rank?.commute.rank ? preview.rank.commute.label : undefined}
                   tone={commuteMetricTone(preview.commute.tone)}
+                  emphasis
                 />
-                <SignalRow Icon={Banknote} label="Budget" value={preview.budget.label} tone={preview.budget.tone} />
-                <SignalRow Icon={ShieldAlert} label="Reported-crime signal" value={preview.safety.label} tone={preview.safety.tone} />
+                <SignalRow Icon={Banknote} label="Budget" value={preview.budget.label} tone={preview.budget.tone} emphasis />
+                <SignalRow Icon={ShieldAlert} label="Safety" value={preview.safety.label} tone={preview.safety.tone} />
                 <SignalRow Icon={Utensils} label="Daily life" value={preview.activity.label} tone={preview.activity.tone} />
               </div>
             </div>
           )}
 
-          {selectedMatch?.matchReason && (
-            <div className="rounded-[var(--radius-md)] bg-[color:var(--sage-100)] p-3">
-              <p className="text-xs font-bold text-[color:var(--sage-strong)]">Match #{selectedMatch.rank}</p>
-              <p className="mt-1 text-sm font-semibold leading-6 text-[color:var(--foreground)]">
-                {selectedMatch.matchReason}
-              </p>
-            </div>
-          )}
-
-          {mode === "match" && matches.length > 0 && (
-            <div className="grid gap-2">
-              <div className="flex items-center justify-between gap-2">
-                <p className="flex items-center gap-2 text-xs font-bold text-[color:var(--muted)]">
-                  <ListChecks size={14} /> Top picks
-                </p>
-                <button
-                  type="button"
-                  onClick={() => setShowCompare((value) => !value)}
-                  className="inline-flex items-center gap-1 rounded-[var(--radius-sm)] border border-[color:var(--panel-border)] bg-white/72 px-2 py-1 text-[11px] font-extrabold text-[color:var(--muted-strong)] transition hover:border-[color:var(--sage)] hover:text-[color:var(--sage-strong)]"
-                >
-                  <BarChart3 size={13} /> {showCompare ? "Hide compare" : "Compare 3"}
-                </button>
-              </div>
-              {showCompare && (
-                <div className="grid gap-2 rounded-[var(--radius-md)] border border-[color:var(--panel-border)] bg-white/72 p-3">
-                  {matches.slice(0, 3).map((match) => (
-                    <div key={`compare-${match.communityAreaNumber}`} className="grid grid-cols-[28px_minmax(0,1fr)] gap-2">
-                      <span
-                        className="flex h-6 w-6 items-center justify-center rounded-full text-xs font-bold text-white"
-                        style={{ backgroundColor: rankColor(match.rank) }}
-                      >
-                        {match.rank}
-                      </span>
-                      <div className="min-w-0">
-                        <p className="truncate text-sm font-extrabold text-[color:var(--foreground)]">{match.name}</p>
-                        <p className="mt-0.5 line-clamp-2 text-xs font-semibold leading-5 text-[color:var(--muted)]">
-                          {match.matchReason || match.descriptors?.slice(0, 3).join(" · ")}
-                        </p>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-              {matches.slice(0, 5).map((match) => {
-                const active = selectedArea?.communityAreaNumber === match.communityAreaNumber || selectedArea?.name === match.name;
-                return (
-                  <button
-                    key={match.communityAreaNumber}
-                    type="button"
-                    onClick={() => onSelect(match.name)}
-                    className={`grid grid-cols-[28px_minmax(0,1fr)] items-start gap-2 rounded-[var(--radius-md)] border p-2 text-left transition ${
-                      active
-                        ? "border-[color:var(--terracotta)] bg-[color:var(--clay-50)]"
-                        : "border-[color:var(--panel-border)] bg-white/62 hover:border-[color:var(--sage)]"
-                    }`}
-                  >
-                    <span
-                      className="flex h-6 w-6 items-center justify-center rounded-full text-xs font-bold text-white"
-                      style={{ backgroundColor: rankColor(match.rank) }}
-                    >
-                      {match.rank}
-                    </span>
-                    <span className="min-w-0">
-                      <span className="block truncate text-sm font-bold text-[color:var(--foreground)]">{match.name}</span>
-                      {match.descriptors?.length ? (
-                        <span className="block truncate text-xs font-semibold text-[color:var(--muted)]">
-                          {match.descriptors.slice(0, 2).join(" · ")}
-                        </span>
-                      ) : null}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-          )}
-          </div>
-        </div>
-
-        <div className="mt-4 grid shrink-0 gap-2 border-t border-[color:var(--panel-border)] pt-3">
           <button
             type="button"
             disabled={!selectedArea}
             onClick={() => selectedArea && onConfirm(selectedArea.name)}
-            className="atlas-button-primary w-full disabled:cursor-not-allowed disabled:opacity-55"
+            className="atlas-button-primary mt-1 w-full disabled:cursor-not-allowed disabled:opacity-55"
           >
             Simulate {selectedArea?.name ?? "neighborhood"}
           </button>
-          <p className="text-xs font-semibold text-[color:var(--muted)]">
-            Next: open the simulation preview, then run the 12-month story.
-          </p>
+          </div>
         </div>
       </aside>
     </div>

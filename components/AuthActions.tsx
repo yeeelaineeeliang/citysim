@@ -25,7 +25,8 @@ export function AuthActions({ className = "" }: AuthActionsProps) {
         </SignInButton>
         <SignUpButton mode="modal">
           <button type="button" className={primaryButton}>
-            Create account
+            <span className="sm:hidden">Create</span>
+            <span className="hidden sm:inline">Create account</span>
           </button>
         </SignUpButton>
       </Show>

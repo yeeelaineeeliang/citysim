@@ -183,6 +183,21 @@ create table if not exists public.entertainment_metrics (
   unique (city_id, community_area_id, year)
 );
 
+create table if not exists public.entertainment_places (
+  id uuid primary key default gen_random_uuid(),
+  city_id uuid references public.cities(id) on delete cascade,
+  community_area_id uuid references public.community_areas(id) on delete set null,
+  neighborhood text,
+  name text not null,
+  category text not null check (category in ('food', 'bar', 'park', 'civic', 'entertainment')),
+  address text,
+  latitude double precision not null check (latitude between -90 and 90),
+  longitude double precision not null check (longitude between -180 and 180),
+  source text not null default 'local cache',
+  description text,
+  updated_at timestamptz not null default timezone('utc', now())
+);
+
 create table if not exists public.street_view_cache (
   id uuid primary key default gen_random_uuid(),
   city_id uuid not null references public.cities(id) on delete cascade,
@@ -259,6 +274,12 @@ create index if not exists housing_metrics_lookup_idx
 create index if not exists entertainment_metrics_lookup_idx
   on public.entertainment_metrics (city_id, community_area_id, year);
 
+create index if not exists entertainment_places_lookup_idx
+  on public.entertainment_places (city_id, community_area_id, category);
+
+create index if not exists entertainment_places_neighborhood_idx
+  on public.entertainment_places (neighborhood, category);
+
 create index if not exists street_view_cache_lookup_idx
   on public.street_view_cache (city_id, community_area_id);
 
@@ -278,6 +299,7 @@ alter table public.transit_monthly enable row level security;
 alter table public.service_requests_311_monthly enable row level security;
 alter table public.housing_metrics enable row level security;
 alter table public.entertainment_metrics enable row level security;
+alter table public.entertainment_places enable row level security;
 alter table public.street_view_cache enable row level security;
 alter table public.model_predictions enable row level security;
 alter table public.demo_qa_cache enable row level security;
@@ -310,6 +332,10 @@ begin
 
   if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'entertainment_metrics' and policyname = 'public read entertainment metrics') then
     create policy "public read entertainment metrics" on public.entertainment_metrics for select using (true);
+  end if;
+
+  if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'entertainment_places' and policyname = 'public read entertainment places') then
+    create policy "public read entertainment places" on public.entertainment_places for select using (true);
   end if;
 
   if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'street_view_cache' and policyname = 'public read street view cache') then
