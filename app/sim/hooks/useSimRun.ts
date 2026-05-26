@@ -5,7 +5,6 @@ import type { UserProfile, MapAction, EntertainmentSummaryMapAction } from "@/li
 import { buildWeekSchedule, type DayEvent } from "@/lib/dailySchedule";
 import { fetchOSRMRoute, commuteMode } from "@/lib/fetchRoute";
 import { NEIGHBORHOOD_COORDINATES } from "@/lib/neighborhoodCoordinates";
-import { getScenesForNeighborhood } from "@/lib/neighborhoodScenes";
 import type { SimMessage } from "@/lib/simMessages";
 import { createSimMessage, bearingTo, getProfileWorkplaceCoords, SIM_YEAR } from "../helpers";
 import type { AuthPromptReason, MobilePanel, RunState, SceneMode, Step } from "../types";
@@ -47,7 +46,7 @@ export function useSimRun({
   const [completedMonths, setCompletedMonths] = useState<number[]>([]);
   const [autoRunMonth, setAutoRunMonth] = useState<number | null>(null);
   const [autoRunNarrative, setAutoRunNarrative] = useState<string>("");
-  const [isTransitioning, setIsTransitioning] = useState(false);
+  const [isSeasonTransitioning, setIsSeasonTransitioning] = useState(false);
   const [isAnimatingCommute, setIsAnimatingCommute] = useState(false);
   const [routeCoords, setRouteCoords] = useState<[number, number][]>([]);
   const [commuteRouteCoords, setCommuteRouteCoords] = useState<[number, number][]>([]);
@@ -57,6 +56,9 @@ export function useSimRun({
   const [streetViewCoords, setStreetViewCoords] = useState<{ lat: number; lng: number } | null>(null);
   const [streetViewHeading, setStreetViewHeading] = useState(0);
 
+  // Four seasonal snapshots — Jan, Apr, Jul, Oct
+  const SEASONS = [1, 4, 7, 10];
+
   const runStateRef = useRef<RunState>("idle");
   const monthSummariesRef = useRef<Record<number, string>>({});
   const prevDwellCoordsRef = useRef<{ lat: number; lng: number } | null>(null);
@@ -64,7 +66,8 @@ export function useSimRun({
   const prefetchActionsRef = useRef<MapAction[] | null>(null);
   const prefetchDoneRef = useRef(false);
 
-  // Fetch road-snapped commute route from OSRM once per (neighborhood × workplace)
+  // Fetch commute geometry once per (neighborhood x workplace). Transit uses the
+  // local CTA GTFS route API; OSRM remains for walking/driving/biking only.
   useEffect(() => {
     if (step !== "sim" || !profile) return;
     const workCoords = getProfileWorkplaceCoords(profile);
@@ -73,6 +76,27 @@ export function useSimRun({
     if (!homePt) return;
 
     setCommuteRouteCoords([]);
+    if (profile.commutePref === "transit") {
+      fetch("/api/routes", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          origin: { lat: homePt.lat, lng: homePt.lng },
+          destination: workCoords,
+          modes: ["transit"],
+        }),
+      })
+        .then((res) => (res.ok ? res.json() : null))
+        .then((data: unknown) => {
+          const option = data && typeof data === "object"
+            ? (data as { options?: Array<{ geometry?: [number, number][] }> }).options?.[0]
+            : null;
+          if (option?.geometry && option.geometry.length >= 2) setCommuteRouteCoords(option.geometry);
+        })
+        .catch(() => { /* route is optional */ });
+      return;
+    }
+
     fetchOSRMRoute(
       { lat: homePt.lat, lng: homePt.lng },
       workCoords,
@@ -81,7 +105,7 @@ export function useSimRun({
       if (coords && coords.length >= 2) setCommuteRouteCoords(coords);
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [step, neighborhood, profile?.workplaceLat, profile?.workplaceLng]);
+  }, [step, neighborhood, profile?.commutePref, profile?.workplaceLat, profile?.workplaceLng]);
 
   // Rebuild daily schedule when entertainment data or active month changes
   useEffect(() => {
@@ -95,6 +119,7 @@ export function useSimRun({
     );
     const parks = entertainmentAction?.parks ?? [];
     const center = entertainmentAction?.center ?? { lat: homePt.lat, lng: homePt.lng };
+    const namedPlaces = entertainmentAction?.places;
     const targetMonth = autoRunMonth ?? month;
 
     setDailySchedule(
@@ -106,30 +131,19 @@ export function useSimRun({
         parks,
         targetMonth,
         neighborhood,
+        namedPlaces,
       ),
     );
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeMapActions, autoRunMonth, neighborhood, profile]);
 
-  // Drive Street View position from avatar's current schedule event
+  // Drive Street View position directly from the avatar's current schedule event location
   useEffect(() => {
     if (runState === "idle" || !currentEvent) return;
     if (currentEvent.kind === "transit") return;
 
-    const scenes = getScenesForNeighborhood(neighborhood);
-    const wc = getProfileWorkplaceCoords(profile);
-    let coord: { lat: number; lng: number };
-
-    switch (currentEvent.kind) {
-      case "work":
-        coord = wc ?? scenes.commercial; break;
-      case "lunch": case "errand": case "social":
-        coord = scenes.commercial; break;
-      case "park":
-        coord = scenes.park; break;
-      default:
-        coord = scenes.residential;
-    }
+    // Use the event's actual coordinates — these already point to real named places
+    const coord = { lat: currentEvent.location.lat, lng: currentEvent.location.lng };
 
     if (prevDwellCoordsRef.current) {
       const dist = Math.hypot(coord.lat - prevDwellCoordsRef.current.lat, coord.lng - prevDwellCoordsRef.current.lng);
@@ -137,7 +151,7 @@ export function useSimRun({
     }
     prevDwellCoordsRef.current = coord;
     setStreetViewCoords(coord);
-  }, [currentEvent, runState, neighborhood, profile]);
+  }, [currentEvent, runState]);
 
   // Auto-run loop — processes one month whenever runState === 'running' and autoRunMonth is set
   useEffect(() => {
@@ -145,6 +159,7 @@ export function useSimRun({
 
     let cancelled = false;
     const abortController = new AbortController();
+    let clockId: ReturnType<typeof setInterval> | null = null;
 
     async function drainSSE(
       res: Response,
@@ -215,7 +230,6 @@ export function useSimRun({
             if (evt.type === "chunk" && evt.text) {
               fullText += evt.text;
               onChunk(fullText);
-              setTimeProgress(Math.min(1, fullText.length / 380));
             }
           } catch { /* skip malformed */ }
         }
@@ -229,6 +243,14 @@ export function useSimRun({
       setTimeProgress(0);
       let fullNarrative = "";
 
+      // Tick-based clock — advances 0→1 over ~9.5s regardless of stream speed
+      const clockStart = Date.now();
+      const MONTH_MS = 28000;
+      clockId = setInterval(() => {
+        if (cancelled) { if (clockId) clearInterval(clockId); clockId = null; return; }
+        setTimeProgress(Math.min(1, (Date.now() - clockStart) / MONTH_MS));
+      }, 120);
+
       const hasPrefetch = prefetchChunksRef.current.length > 0;
 
       if (hasPrefetch) {
@@ -239,7 +261,6 @@ export function useSimRun({
           if (cancelled) break;
           replayText += token;
           setAutoRunNarrative(replayText);
-          setTimeProgress(Math.min(1, replayText.length / 380));
           await new Promise((r) => requestAnimationFrame(r));
         }
         fullNarrative = replayText;
@@ -291,6 +312,7 @@ export function useSimRun({
         } catch { /* continue even on error */ }
       }
 
+      if (clockId) { clearInterval(clockId); clockId = null; }
       if (cancelled) return;
 
       if (fullNarrative) {
@@ -300,18 +322,22 @@ export function useSimRun({
         if (summary) monthSummariesRef.current = { ...monthSummariesRef.current, [m]: summary };
       }
 
-      await new Promise<void>((resolve) => setTimeout(resolve, 1200));
+      await new Promise<void>((resolve) => setTimeout(resolve, 800));
       if (cancelled) return;
 
       setCompletedMonths((prev) => [...prev, m]);
       setMonth(m);
 
-      if (m < 12) {
-        setIsTransitioning(true);
-        await new Promise<void>((resolve) => setTimeout(resolve, 900));
+      const nextM = SEASONS[SEASONS.indexOf(m) + 1] ?? null;
+
+      if (nextM !== null) {
+        // Season transition card — slides in while Street View crossfades behind it
+        setAutoRunMonth(nextM);
+        setIsSeasonTransitioning(true);
+        await new Promise<void>((resolve) => setTimeout(resolve, 2800));
         if (cancelled) return;
-        setIsTransitioning(false);
-        await new Promise<void>((resolve) => setTimeout(resolve, 80));
+        setIsSeasonTransitioning(false);
+        await new Promise<void>((resolve) => setTimeout(resolve, 120));
         if (cancelled) return;
       } else {
         await new Promise<void>((resolve) => setTimeout(resolve, 600));
@@ -320,12 +346,10 @@ export function useSimRun({
 
       if (runStateRef.current !== "running") return;
 
-      if (m >= 12) {
+      if (nextM === null) {
         setRunState("done");
         runStateRef.current = "done";
         setAutoRunMonth(null);
-      } else {
-        setAutoRunMonth(m + 1);
       }
     }
 
@@ -333,6 +357,7 @@ export function useSimRun({
     return () => {
       cancelled = true;
       abortController.abort();
+      if (clockId) { clearInterval(clockId); clockId = null; }
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [runState, autoRunMonth]);
@@ -353,7 +378,7 @@ export function useSimRun({
     prefetchActionsRef.current = null;
     prefetchDoneRef.current = false;
     monthSummariesRef.current = {};
-    setAutoRunMonth(month);
+    setAutoRunMonth(SEASONS[0] ?? 1);
   }
 
   function togglePause() {
@@ -385,7 +410,7 @@ export function useSimRun({
     completedMonths,
     autoRunMonth,
     autoRunNarrative,
-    isTransitioning,
+    isSeasonTransitioning,
     isAnimatingCommute,
     routeCoords,
     commuteRouteCoords,

@@ -144,6 +144,8 @@ export interface NeighborhoodMatch {
 type ScoringContext = {
   profile: {
     budgetCeiling: number | null;
+    budgetFloor: number | null;
+    hasWorkplace: boolean;
     commutePreference: CommutePreference;
     weights: Record<MatchDimension, number>;
     workplaceName: string | null;
@@ -237,6 +239,13 @@ function parseBudgetCeiling(profile: MatchUserProfile): number | null {
   const amounts = budgetRange.match(/\d[\d,]*/g)?.map((n) => Number(n.replace(/,/g, ""))) ?? [];
   if (amounts.length === 0) return null;
   return Math.max(...amounts);
+}
+
+function parseBudgetFloor(profile: MatchUserProfile): number | null {
+  const budgetRange = "budgetRange" in profile ? profile.budgetRange : undefined;
+  if (!budgetRange || !/\+\s*$/.test(budgetRange.trim())) return null;
+  const amounts = budgetRange.match(/\d[\d,]*/g)?.map((n) => Number(n.replace(/,/g, ""))) ?? [];
+  return amounts.length > 0 ? Math.max(...amounts) : null;
 }
 
 function normalizeWeights(profile: MatchUserProfile): Record<MatchDimension, number> {
@@ -333,6 +342,8 @@ function buildScoringContext(profile: MatchUserProfile, neighborhoods: Neighborh
   return {
     profile: {
       budgetCeiling: parseBudgetCeiling(profile),
+      budgetFloor: parseBudgetFloor(profile),
+      hasWorkplace: workplaceName !== null,
       commutePreference,
       weights: normalizeWeights(profile),
       workplaceName,
@@ -349,11 +360,22 @@ function buildScoringContext(profile: MatchUserProfile, neighborhoods: Neighborh
   };
 }
 
-function budgetFit(neighborhood: NeighborhoodData, budgetCeiling: number | null) {
+function budgetFit(neighborhood: NeighborhoodData, budgetCeiling: number | null, budgetFloor: number | null = null) {
   const rent = getRent(neighborhood);
-  if (rent === null || budgetCeiling === null || budgetCeiling <= 0) return null;
-  if (rent <= budgetCeiling) return 1;
-  return clamp01(1 - (rent - budgetCeiling) / budgetCeiling);
+  if (rent === null) return null;
+
+  if (budgetCeiling !== null && budgetCeiling > 0) {
+    if (rent <= budgetCeiling) return 1;
+    return clamp01(1 - (rent - budgetCeiling) / budgetCeiling);
+  }
+
+  if (budgetFloor !== null && budgetFloor > 0) {
+    const threshold = budgetFloor * 0.6;
+    if (rent >= threshold) return 1;
+    return clamp01(rent / threshold);
+  }
+
+  return null;
 }
 
 function dimensionScore(
@@ -365,7 +387,7 @@ function dimensionScore(
   const normalizedRaw = raw === null ? 0.5 : normalize(raw, context.ranges[dimension].min, context.ranges[dimension].max);
 
   if (dimension === "affordability") {
-    const fit = budgetFit(neighborhood, context.profile.budgetCeiling);
+    const fit = budgetFit(neighborhood, context.profile.budgetCeiling, context.profile.budgetFloor);
     return fit === null ? normalizedRaw : normalizedRaw * 0.55 + fit * 0.45;
   }
 
@@ -375,7 +397,7 @@ function dimensionScore(
     const shortCommute = context.profile.shortCommuteMode;
     // "Short commute" lifestyle tag: steeper exponential decay + commute dominates transit infrastructure
     const decayConstant = shortCommute ? 15 : 30;
-    const commuteFitWeight = shortCommute ? 0.85 : 0.65;
+    const commuteFitWeight = shortCommute ? 0.85 : context.profile.hasWorkplace ? 0.78 : 0.65;
     const relativeCommuteFit = 1 - normalize(minutes, context.ranges.commuteMinutes.min, context.ranges.commuteMinutes.max);
     const absolutePenalty = Math.exp(-minutes / decayConstant);
     const commuteFit = relativeCommuteFit * 0.6 + absolutePenalty * 0.4;
@@ -409,6 +431,7 @@ function buildMatchDescriptors(
   const commuteMin = getCommuteMinutes(neighborhood, context.profile.commutePreference);
   const rent = getRent(neighborhood);
   const budget = context.profile.budgetCeiling;
+  const budgetFloor = context.profile.budgetFloor;
 
   if (commuteMin !== null) {
     const name = context.profile.workplaceName;
@@ -420,8 +443,10 @@ function buildMatchDescriptors(
       labels.push(`Est. $${rent.toLocaleString()}/mo — fits your budget`);
     } else if (budget !== null && rent > budget) {
       labels.push(`Est. $${rent.toLocaleString()}/mo — over budget`);
+    } else if (budget === null && budgetFloor !== null) {
+      labels.push(`Est. $${rent.toLocaleString()}/mo`);
     }
-  } else if (budgetFit(neighborhood, budget) !== null) {
+  } else if (budgetFit(neighborhood, budget, budgetFloor) !== null) {
     labels.push("Fits budget");
   }
 
@@ -455,7 +480,6 @@ function buildMatchReason(
   }
 
   if (componentScores.safety > 0.68) parts.push("low crime");
-  else if (componentScores.safety < 0.35) parts.push("higher crime — check the data");
 
   if (commuteMin === null && componentScores.transit > 0.65) parts.push("strong transit access");
   if (componentScores.entertainment > 0.75) parts.push("active dining & nightlife");
@@ -495,10 +519,20 @@ export function rankNeighborhoodMatches(
         0,
       );
 
+      const commuteMin = getCommuteMinutes(neighborhood, context.profile.commutePreference);
+      const commuteModifier =
+        context.profile.workplaceName !== null && commuteMin !== null
+          ? commuteMin <= 10  ? 1.15
+          : commuteMin <= 25  ? 1.05
+          : commuteMin <= 45  ? 0.97
+          : Math.max(0.72, 0.97 - (commuteMin - 45) * 0.004)
+          : 1;
+      const finalScore = fitScore * commuteModifier;
+
       return {
         neighborhood,
         index,
-        fitScore,
+        fitScore: finalScore,
         descriptors: buildMatchDescriptors(neighborhood, componentScores, context),
         matchReason: buildMatchReason(neighborhood, componentScores, context),
       };
@@ -614,6 +648,8 @@ function withWorkplaceCommute(profile: MatchUserProfile, neighborhoods: Neighbor
       commute: {
         transitMinutes: Math.round(miles * 8),
         drivingMinutes: Math.round(miles * 4),
+        bikingMinutes: Math.round(miles * 6),
+        walkingMinutes: Math.round(miles * 20),
       },
     };
   });

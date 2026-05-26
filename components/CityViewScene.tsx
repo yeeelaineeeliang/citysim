@@ -201,11 +201,19 @@ export function CityViewScene({ lat, lng, month: _month, timeProgress, mapAction
       if (action.type === 'commute_route') {
         const a = action as CommuteRouteMapAction
         if (!a.origin || !a.destination) continue
+        const coordinates = a.geometry?.length
+          ? a.geometry.map(([lat, lng]) => [lng, lat])
+          : a.mode === 'transit'
+            ? []
+            : [[a.origin.lng, a.origin.lat], [a.destination.lng, a.destination.lat]]
+        if (coordinates.length < 2) continue
         map.addSource('commute-line', {
           type: 'geojson',
-          data: { type: 'Feature', geometry: { type: 'LineString', coordinates: [[a.origin.lng, a.origin.lat], [a.destination.lng, a.destination.lat]] } },
+          data: { type: 'Feature', geometry: { type: 'LineString', coordinates } },
         })
-        map.addLayer({ id: 'commute-line', type: 'line', source: 'commute-line', paint: { 'line-color': '#5aafff', 'line-width': 3, 'line-dasharray': [2, 2], 'line-opacity': 0.90 } })
+        const paint: mapboxgl.LinePaint = { 'line-color': a.mode === 'transit' ? '#6597b8' : '#5aafff', 'line-width': 3, 'line-opacity': 0.90 }
+        if (a.source === 'estimate') paint['line-dasharray'] = [2, 2]
+        map.addLayer({ id: 'commute-line', type: 'line', source: 'commute-line', paint })
         dashTickRef.current = 0
         dashRef.current = setInterval(() => {
           dashTickRef.current += 1

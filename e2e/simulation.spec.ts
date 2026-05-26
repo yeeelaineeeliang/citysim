@@ -69,4 +69,24 @@ test.describe("Simulation avatar scene", () => {
     // After exit, the normal sim layout returns (run button reappears)
     await expect(runBtn).toBeVisible({ timeout: 5_000 });
   });
+
+  test("renders themed selected map with local place markers", async ({ page }) => {
+    await page.goto("/sim?demo=1");
+
+    await page.getByRole("button", { name: /what can i do on weekends here/i }).first().click();
+
+    await expect(page.getByText(/Hyde Park entertainment|Food|Bars|Parks/i).first()).toBeVisible({ timeout: 10_000 });
+    await expect(page.locator(".leaflet-container")).toBeVisible();
+    await expect(page.locator('.leaflet-overlay-pane path[stroke="#c76545"]').first()).toBeVisible({ timeout: 10_000 });
+    await expect(page.locator("[data-place-marker]").first()).toBeVisible({ timeout: 10_000 });
+  });
+
+  test("links back to the profile page from the simulation header", async ({ page }) => {
+    await page.goto("/sim?demo=1");
+
+    await page.getByRole("link", { name: /back to profile/i }).click();
+
+    await expect(page).toHaveURL(/\/profile$/);
+    await expect(page.getByRole("heading", { name: /tune the map to your daily life/i })).toBeVisible();
+  });
 });

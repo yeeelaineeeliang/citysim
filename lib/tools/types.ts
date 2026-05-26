@@ -84,6 +84,20 @@ export interface MapPoint {
   lng: number
 }
 
+export type EntertainmentPlaceCategory = 'food' | 'bar' | 'park' | 'civic' | 'entertainment'
+
+export interface EntertainmentPlace {
+  id: string
+  name: string
+  category: EntertainmentPlaceCategory
+  lat: number
+  lng: number
+  neighborhood?: string
+  address?: string
+  source?: string
+  description?: string
+}
+
 export interface EntertainmentSummaryMapAction {
   type: 'entertainment_summary'
   id: string
@@ -93,6 +107,15 @@ export interface EntertainmentSummaryMapAction {
   bars: number
   parks: string[]
   farmersMarkets: boolean
+  places?: EntertainmentPlace[]
+}
+
+export interface CommuteRouteSegment {
+  mode: UserProfile['commutePref'] | 'walk'
+  label: string
+  geometry: [number, number][]
+  fromName?: string
+  toName?: string
 }
 
 export interface CommuteRouteMapAction {
@@ -108,6 +131,10 @@ export interface CommuteRouteMapAction {
   estimatedMinutes: number | null
   routeLabel: string | null
   caveat: string
+  geometry?: [number, number][]
+  segments?: CommuteRouteSegment[]
+  source?: 'cta_gtfs_cached' | 'osrm' | 'estimate'
+  confidence?: 'low' | 'medium'
 }
 
 export interface CrimeAreaSignalMapAction {

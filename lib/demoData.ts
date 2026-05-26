@@ -22,6 +22,13 @@ export const DEMO_MONTH = 10
 
 const HYDE_PARK_POINT = { lat: 41.7943, lng: -87.5918 }
 const UCHICAGO_POINT = { lat: 41.7886, lng: -87.5987 }
+const DEMO_TRANSIT_GEOMETRY: [number, number][] = [
+  [41.7943, -87.5918],
+  [41.79308, -87.58602],
+  [41.7908, -87.58934],
+  [41.78935, -87.59422],
+  [41.7886, -87.5987],
+]
 
 function demoEntertainmentAction(month: number): MapAction {
   return {
@@ -49,7 +56,17 @@ function demoCommuteAction(month: number, estimatedMinutes: number): MapAction {
     distanceMiles: 0.5,
     estimatedMinutes,
     routeLabel: 'Route 6',
-    caveat: 'Coarse spatial estimate, not turn-by-turn navigation.',
+    caveat: 'CTA GTFS route-shape corridor from cached public data; verify exact stop, transfer, and schedule details before signing.',
+    geometry: DEMO_TRANSIT_GEOMETRY,
+    segments: [{
+      mode: 'transit',
+      label: 'CTA Route 6',
+      geometry: DEMO_TRANSIT_GEOMETRY,
+      fromName: '55th Street',
+      toName: 'University of Chicago',
+    }],
+    source: 'cta_gtfs_cached',
+    confidence: 'medium',
   }
 }
 

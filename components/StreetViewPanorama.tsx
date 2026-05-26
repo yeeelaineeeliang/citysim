@@ -41,8 +41,10 @@ export function StreetViewPanorama({ lat, lng, month, hourOfDay = 12, targetHead
   const headingRef = useRef(0)
   const targetHeadingRef = useRef(targetHeading)
   const driftTimeRef = useRef(0)
+  const crossfadeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [ready, setReady] = useState(false)
   const [noImagery, setNoImagery] = useState(false)
+  const [crossfading, setCrossfading] = useState(false)
 
   // Keep targetHeadingRef in sync without restarting the heading interval
   useEffect(() => {
@@ -50,9 +52,12 @@ export function StreetViewPanorama({ lat, lng, month, hourOfDay = 12, targetHead
   }, [targetHeading])
 
   useEffect(() => {
-    // If panorama already mounted, smooth position update — no remount
+    // If panorama already mounted, smooth position update with crossfade — no remount
     if (panoramaRef.current) {
+      setCrossfading(true)
       panoramaRef.current.setPosition({ lat, lng })
+      if (crossfadeTimerRef.current) clearTimeout(crossfadeTimerRef.current)
+      crossfadeTimerRef.current = setTimeout(() => setCrossfading(false), 1000)
       return
     }
 
@@ -92,8 +97,8 @@ export function StreetViewPanorama({ lat, lng, month, hourOfDay = 12, targetHead
               showRoadLabels: false,
               zoomControl: false,
               panControl: false,
-              linksControl: true,
-              clickToGo: true,
+              linksControl: false,
+              clickToGo: false,
             })
             panoramaRef.current = pano
             setReady(pano.getVisible() !== false)
@@ -109,10 +114,11 @@ export function StreetViewPanorama({ lat, lng, month, hourOfDay = 12, targetHead
     }
   }, [lat, lng])
 
-  // Null the panorama ref only on unmount, not on lat/lng changes
+  // Null refs on unmount only — not on lat/lng changes
   useEffect(() => {
     return () => {
       panoramaRef.current = null
+      if (crossfadeTimerRef.current) clearTimeout(crossfadeTimerRef.current)
     }
   }, [])
 
@@ -149,6 +155,8 @@ export function StreetViewPanorama({ lat, lng, month, hourOfDay = 12, targetHead
         className="absolute inset-0"
         style={{ opacity: ready ? 1 : 0, transition: "opacity 0.4s" }}
       />
+
+      {/* Time-of-day tint */}
       {(() => {
         const style = timeOfDayStyle(hourOfDay, month)
         return style ? (
@@ -163,6 +171,23 @@ export function StreetViewPanorama({ lat, lng, month, hourOfDay = 12, targetHead
           />
         ) : null
       })()}
+
+      {/* Position-change crossfade — covers the Street View black flash on setPosition() */}
+      <div
+        style={{
+          position: 'absolute', inset: 0, zIndex: 15,
+          background: 'rgb(8,14,22)',
+          opacity: crossfading ? 1 : 0,
+          transition: crossfading ? 'opacity 0.15s ease' : 'opacity 0.5s ease',
+          pointerEvents: 'none',
+        }}
+      />
+
+      {/* Input block — prevents Street View click-to-navigate and drag while sim is running */}
+      {enableDrift && (
+        <div style={{ position: 'absolute', inset: 0, zIndex: 20, cursor: 'default' }} />
+      )}
+
       {!ready && (
         <div className="absolute inset-0">
           <Skybox month={month} crimeSignal={0} serviceSignal={null} transitSignal={0} fullBleed showElements />

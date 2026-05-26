@@ -15,6 +15,18 @@
   --sage-100: #dfe8d4;
   --terracotta: #c76545;
   --clay-50: #fbebe2;
+  --signal-good-border: #6f8d5f;
+  --signal-good-bg: #e4edda;
+  --signal-good-text: #4f6f45;
+  --signal-mixed-border: #b88746;
+  --signal-mixed-bg: #f5e7cf;
+  --signal-mixed-text: #6e5730;
+  --signal-caution-border: #c76545;
+  --signal-caution-bg: #f8e4db;
+  --signal-caution-text: #a14e36;
+  --signal-unknown-border: #7e8a80;
+  --signal-unknown-bg: #f3f1ec;
+  --signal-unknown-text: #66715f;
   --accent: var(--terracotta);
   --accent-strong: #9f4a32;
   --lake: #6597b8;
@@ -44,7 +56,8 @@ body {
   margin: 0;
   min-height: 100vh;
   color: var(--foreground);
-  font-family: "Avenir Next", "Segoe UI Rounded", "SF Pro Rounded", "Trebuchet MS", system-ui, sans-serif;
+  font-family: "SF Pro Text", "Inter", "Segoe UI", Roboto, "Helvetica Neue", Arial, system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
 }
 
@@ -120,7 +133,7 @@ input[type="range"] {
   gap: 10px;
   color: white;
   font-size: 14px;
-  font-weight: 800;
+  font-weight: 700;
   letter-spacing: 0.02em;
   text-shadow: 0 1px 2px rgba(38, 49, 38, 0.24);
   white-space: nowrap;
@@ -150,10 +163,10 @@ input[type="range"] {
 }
 
 .atlas-kicker {
-  font-size: 11px;
-  font-weight: 750;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: none;
 }
 
 .atlas-button-primary,

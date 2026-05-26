@@ -202,6 +202,13 @@ function commuteToneLabel(tone: Exclude<CommunityAreaPreviewCommuteTone, "unavai
   return "workable commute";
 }
 
+function commuteModePhrase(mode: UserProfile["commutePref"]): string {
+  if (mode === "transit") return "by bus/transit";
+  if (mode === "driving") return "drive";
+  if (mode === "walking") return "walk";
+  return "bike";
+}
+
 function commuteLabel(input: CommunityAreaPreviewInput): CommunityAreaPreview["commute"] {
   const origin = getCoordinateByName(input.neighborhood);
   const destination = resolveWorkplace(input);
@@ -218,7 +225,7 @@ function commuteLabel(input: CommunityAreaPreviewInput): CommunityAreaPreview["c
   const minutes = estimateMinutes(miles, input.commutePref);
   const tone = commuteTone(minutes, input.commutePref, input.priorities);
   return {
-    label: `~${minutes} min by ${input.commutePref} to ${destination.label} · ${commuteToneLabel(tone)}`,
+    label: `~${minutes} min ${commuteModePhrase(input.commutePref)} to ${destination.label} · ${commuteToneLabel(tone)}`,
     confidence: "low",
     tone,
     minutes,
@@ -432,8 +439,13 @@ function joinedSentence(parts: string[]): string {
   return `${parts.slice(0, -1).join(", ")} and ${parts[parts.length - 1]}`;
 }
 
-function capitalizeSentence(value: string): string {
-  return value ? `${value.charAt(0).toUpperCase()}${value.slice(1)}` : value;
+function strengthSentence(strengths: string[]): string {
+  const subjects = strengths.slice(0, 2);
+  return `Strong ${joinedSentence(subjects)}`;
+}
+
+function compactRankLabel(rank: CommunityAreaPreviewRankItem): string {
+  return rank.rank ? `#${rank.rank} of ${rank.total}` : "";
 }
 
 function verdictLine(
@@ -444,42 +456,38 @@ function verdictLine(
   const strengths: string[] = [];
   const concerns: string[] = [];
 
-  if (preview.commute.tone === "good") strengths.push("anchor commute looks strong");
-  if (preview.budget.tone === "good") strengths.push("budget fit looks strong");
-  if (preview.activity.tone === "good") strengths.push("daily-life access looks strong");
+  if (preview.commute.tone === "good") strengths.push("commute");
+  if (preview.budget.tone === "good") strengths.push("budget fit");
+  if (preview.activity.tone === "good") strengths.push("daily-life access");
 
   if (preview.commute.tone === "caution") {
     concerns.push(
       priorities.transit >= 0.26
-        ? "the anchor commute conflicts with your commute priority"
-        : "the anchor commute is long",
+        ? "the commute conflicts with your commute priority"
+        : "the commute is long",
     );
   }
   if (preview.safety.tone === "caution") {
     concerns.push(
       priorities.safety >= 0.26
-        ? "the reported-crime signal deserves a closer look"
+        ? "the safety signal deserves a closer look"
         : "reported incidents are above the city average",
     );
   }
 
-  const rankLead = preview.rank.overall.rank
-    ? `${preview.rank.overall.label}.`
-    : preview.rank.commute.rank
-      ? `${preview.rank.commute.label}.`
-      : "";
+  const rankSuffix = compactRankLabel(preview.rank.overall) || compactRankLabel(preview.rank.commute);
 
-  let judgment = "Review the detailed signals before choosing.";
+  let judgment = "Review the detailed signals before choosing";
   if (strengths.length > 0 && concerns.length > 0) {
-    judgment = `${capitalizeSentence(joinedSentence(strengths.slice(0, 2)))}, but ${concerns[0]}.`;
+    judgment = `${strengthSentence(strengths)}, but ${concerns[0]}`;
   } else if (concerns.length > 0) {
-    judgment = `Watch: ${joinedSentence(concerns.slice(0, 2))}.`;
+    judgment = `Watch: ${joinedSentence(concerns.slice(0, 2))}`;
   } else if (strengths.length > 0) {
-    judgment = `${capitalizeSentence(joinedSentence(strengths.slice(0, 2)))}.`;
+    judgment = strengthSentence(strengths);
   }
 
   return {
-    label: [rankLead, judgment].filter(Boolean).join(" "),
+    label: `${[judgment, rankSuffix].filter(Boolean).join(" · ")}.`,
     tone: concerns.length > 0 ? "caution" : strengths.length > 0 ? "good" : "neutral",
   };
 }

@@ -19,8 +19,28 @@ test("community area preview creates a UChicago commute label", () => {
     descriptors: ["Lakefront", "University town"],
   });
 
-  assert.match(preview.commute.label, /~\d+ min by transit to UChicago/i);
+  assert.match(preview.commute.label, /~\d+ min by bus\/transit to UChicago/i);
+  assert.doesNotMatch(preview.commute.label, /by transit to UChicago/i);
   assert.match(preview.fitLine, /UChicago/i);
+});
+
+test("community area preview uses user-facing commute mode labels", () => {
+  const cases: Array<{ commutePref: CommunityAreaPreviewInput["commutePref"]; label: RegExp; legacy: RegExp }> = [
+    { commutePref: "transit", label: /by bus\/transit to UChicago/i, legacy: /by transit to UChicago/i },
+    { commutePref: "driving", label: /min drive to UChicago/i, legacy: /by driving to UChicago/i },
+    { commutePref: "walking", label: /min walk to UChicago/i, legacy: /by walking to UChicago/i },
+    { commutePref: "biking", label: /min bike to UChicago/i, legacy: /by biking to UChicago/i },
+  ];
+
+  for (const item of cases) {
+    const preview = buildCommunityAreaPreview({
+      ...baseInput,
+      commutePref: item.commutePref,
+    });
+
+    assert.match(preview.commute.label, item.label);
+    assert.doesNotMatch(preview.commute.label, item.legacy);
+  }
 });
 
 test("long UChicago commute returns a caution commute tone", () => {
@@ -73,6 +93,19 @@ test("safety label includes city comparison when available", () => {
 
   assert.match(preview.safety.label, /398 in Oct; above city avg 210/);
   assert.equal(preview.safety.tone, "caution");
+});
+
+test("fit verdict combines strengths without repeated phrasing", () => {
+  const preview = buildCommunityAreaPreview(baseInput, {
+    rentEstimate: 1500,
+    restaurants: 130,
+    bars: 4,
+  });
+
+  assert.match(preview.verdict.label, /Strong commute and budget fit/);
+  assert.doesNotMatch(preview.verdict.label, /Anchor commute and budget fit are strong/);
+  assert.doesNotMatch(preview.verdict.label, /are strong/);
+  assert.doesNotMatch(preview.verdict.label, /looks strong/);
 });
 
 test("preview ranking degrades gracefully with coordinate-only comparison", () => {
