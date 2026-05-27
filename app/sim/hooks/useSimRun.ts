@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { UserProfile, MapAction, EntertainmentSummaryMapAction } from "@/lib/tools/types";
 import { buildWeekSchedule, type DayEvent } from "@/lib/dailySchedule";
 import { fetchOSRMRoute, commuteMode } from "@/lib/fetchRoute";
@@ -59,12 +59,18 @@ export function useSimRun({
   // Four seasonal snapshots — Jan, Apr, Jul, Oct
   const SEASONS = [1, 4, 7, 10];
 
+  const [waitingForContinue, setWaitingForContinue] = useState(false);
+  const [summaryNarrative, setSummaryNarrative] = useState("");
+  const [summaryMonth, setSummaryMonth] = useState<number | null>(null);
+
   const runStateRef = useRef<RunState>("idle");
   const monthSummariesRef = useRef<Record<number, string>>({});
   const prevDwellCoordsRef = useRef<{ lat: number; lng: number } | null>(null);
   const prefetchChunksRef = useRef<string[]>([]);
   const prefetchActionsRef = useRef<MapAction[] | null>(null);
   const prefetchDoneRef = useRef(false);
+  const narrativeRef = useRef("");
+  const continueResolveRef = useRef<(() => void) | null>(null);
 
   // Fetch commute geometry once per (neighborhood x workplace). Transit uses the
   // local CTA GTFS route API; OSRM remains for walking/driving/biking only.
@@ -243,9 +249,9 @@ export function useSimRun({
       setTimeProgress(0);
       let fullNarrative = "";
 
-      // Tick-based clock — advances 0→1 over ~9.5s regardless of stream speed
+      // Tick-based clock — advances 0→1 over 60s regardless of stream speed
       const clockStart = Date.now();
-      const MONTH_MS = 28000;
+      const MONTH_MS = 60000;
       clockId = setInterval(() => {
         if (cancelled) { if (clockId) clearInterval(clockId); clockId = null; return; }
         setTimeProgress(Math.min(1, (Date.now() - clockStart) / MONTH_MS));
@@ -337,10 +343,25 @@ export function useSimRun({
         await new Promise<void>((resolve) => setTimeout(resolve, 2800));
         if (cancelled) return;
         setIsSeasonTransitioning(false);
-        await new Promise<void>((resolve) => setTimeout(resolve, 120));
+
+        // Pause for "Month in Review" — user must click Continue before next month starts
+        setSummaryNarrative(fullNarrative);
+        setSummaryMonth(m);
+        setWaitingForContinue(true);
+        await new Promise<void>((resolve) => { continueResolveRef.current = resolve; });
         if (cancelled) return;
+        setWaitingForContinue(false);
+        continueResolveRef.current = null;
       } else {
-        await new Promise<void>((resolve) => setTimeout(resolve, 600));
+        // Last month — brief pause before year-complete state
+        setSummaryNarrative(fullNarrative);
+        setSummaryMonth(m);
+        setWaitingForContinue(true);
+        await new Promise<void>((resolve) => { continueResolveRef.current = resolve; });
+        if (cancelled) return;
+        setWaitingForContinue(false);
+        continueResolveRef.current = null;
+        await new Promise<void>((resolve) => setTimeout(resolve, 300));
         if (cancelled) return;
       }
 
@@ -378,6 +399,10 @@ export function useSimRun({
     prefetchActionsRef.current = null;
     prefetchDoneRef.current = false;
     monthSummariesRef.current = {};
+    setWaitingForContinue(false);
+    setSummaryNarrative("");
+    setSummaryMonth(null);
+    continueResolveRef.current = null;
     setAutoRunMonth(SEASONS[0] ?? 1);
   }
 
@@ -403,7 +428,16 @@ export function useSimRun({
     setStreetViewCoords(null);
     setStreetViewHeading(0);
     prevDwellCoordsRef.current = null;
+    setWaitingForContinue(false);
+    setSummaryNarrative("");
+    setSummaryMonth(null);
+    continueResolveRef.current?.();
+    continueResolveRef.current = null;
   }
+
+  const continueMonth = useCallback(() => {
+    continueResolveRef.current?.();
+  }, []);
 
   return {
     runState,
@@ -422,5 +456,9 @@ export function useSimRun({
     startAutoRun,
     togglePause,
     stopAutoRun,
+    waitingForContinue,
+    summaryNarrative,
+    summaryMonth,
+    continueMonth,
   };
 }
