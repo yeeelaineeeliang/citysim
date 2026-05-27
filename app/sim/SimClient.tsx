@@ -500,6 +500,7 @@ export function SimClient({ demoMode = false }: Readonly<SimClientProps>) {
     isSeasonTransitioning, timeProgress, dailySchedule, currentEvent, setCurrentEvent,
     streetViewCoords, streetViewHeading, routeCoords, commuteRouteCoords,
     startAutoRun, togglePause, stopAutoRun,
+    waitingForContinue, summaryNarrative, summaryMonth, continueMonth,
   } = runData;
 
   const monthName = MONTH_NAMES[month - 1] ?? "this month";
@@ -616,54 +617,41 @@ export function SimClient({ demoMode = false }: Readonly<SimClientProps>) {
                   enableDrift
                 />
               </div>
-              {/* Layer 2: Avatar route map — corner inset, top-right */}
-              <div
-                data-testid="mini-map"
-                style={{
-                  position: "absolute",
-                  top: 56,
-                  right: 16,
-                  width: 300,
-                  height: 200,
-                  zIndex: 1050,
-                  borderRadius: 12,
-                  overflow: "hidden",
-                  border: "1px solid rgba(255,255,255,0.18)",
-                  boxShadow: "0 4px 24px rgba(0,0,0,0.6)",
-                }}
-              >
-                <SimAvatarScene
-                  lat={sceneCoords.lat}
-                  lng={sceneCoords.lng}
-                  workplaceCoords={workplaceCoords}
-                  routeCoords={routeCoords}
-                  isAnimating={runState === "running"}
-                  month={sceneMonth}
-                  schedule={dailySchedule.length > 0 ? dailySchedule : undefined}
-                  commuteRouteCoords={commuteRouteCoords.length > 0 ? commuteRouteCoords : undefined}
-                  onEventChange={setCurrentEvent}
-                  neighborhoodName={neighborhood}
-                  workplaceName={profile?.workplace}
-                  compact
-                />
-                {/* Label — tells the user what this map shows */}
-                <div
-                  style={{
-                    position: "absolute", top: 0, left: 0, right: 0,
-                    padding: "4px 7px",
-                    fontSize: 9,
-                    fontWeight: 700,
-                    color: "rgba(255,255,255,0.65)",
-                    letterSpacing: "0.1em",
-                    textTransform: "uppercase",
-                    background: "linear-gradient(to bottom, rgba(0,0,0,0.55), transparent)",
-                    pointerEvents: "none",
-                    zIndex: 1201,
-                  }}
-                >
-                  Day route
-                </div>
-              </div>
+              {/* Month in Review — appears between months, user must dismiss */}
+              {waitingForContinue && (() => {
+                const SEASONS_MAP: Record<number, string> = { 1: "Winter", 4: "Spring", 7: "Summer", 10: "Fall" };
+                const nextSeasonMonths: Record<number, number> = { 1: 4, 4: 7, 7: 10 };
+                const nextM = summaryMonth !== null ? nextSeasonMonths[summaryMonth] : null;
+                const nextLabel = nextM != null ? SEASONS_MAP[nextM] : null;
+                const btnLabel = nextLabel ? `Continue to ${nextLabel} →` : "See Year Summary →";
+                return (
+                  <div
+                    className="absolute inset-0 z-[1200] flex items-center justify-center"
+                    style={{ background: "rgba(0,0,0,0.65)", backdropFilter: "blur(6px)" }}
+                  >
+                    <div
+                      className="mx-6 w-full max-w-xl rounded-2xl border border-white/10 p-8 shadow-2xl"
+                      style={{ background: "rgba(18,30,42,0.97)" }}
+                    >
+                      <div className="mb-2 text-xs font-semibold uppercase tracking-widest text-amber-400">
+                        Month in Review
+                      </div>
+                      <h2 className="mb-4 text-2xl font-bold text-white">
+                        {MONTH_NAMES[(summaryMonth ?? 1) - 1]} · {neighborhood}
+                      </h2>
+                      <p className="mb-8 whitespace-pre-line text-sm leading-relaxed text-white/80">
+                        {summaryNarrative || "Month complete."}
+                      </p>
+                      <button
+                        onClick={continueMonth}
+                        className="w-full rounded-xl bg-amber-500 py-3 text-sm font-semibold text-black transition-colors hover:bg-amber-400"
+                      >
+                        {btnLabel}
+                      </button>
+                    </div>
+                  </div>
+                );
+              })()}
               {/* Layer 3: CSS weather particles */}
               <WeatherLayer month={sceneMonth} />
               {/* Exit button */}

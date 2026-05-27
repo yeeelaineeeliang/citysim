@@ -10,7 +10,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ images: [], imageId: null }, { status: 400 })
   }
 
-  const token = process.env.NEXT_PUBLIC_MAPILLARY_TOKEN
+  const token = process.env.MAPILLARY_TOKEN ?? process.env.NEXT_PUBLIC_MAPILLARY_TOKEN
   if (!token) return NextResponse.json({ images: [], imageId: null })
 
   const delta = 0.003
