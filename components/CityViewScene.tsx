@@ -85,7 +85,7 @@ export function CityViewScene({ lat, lng, month: _month, timeProgress, mapAction
         style: 'mapbox://styles/mapbox/dark-v11',
         center: initCenterRef.current,
         zoom: 15.5,      // street-level immersion
-        pitch: 50,       // dramatic tilt — GTA helicopter angle
+        pitch: 65,       // first-person street-level angle
         bearing: 0,
         antialias: true,
         interactive: false,
@@ -173,7 +173,7 @@ export function CityViewScene({ lat, lng, month: _month, timeProgress, mapAction
     map.flyTo({
       center: [lng, lat],
       zoom: 15.5,
-      pitch: 50,
+      pitch: 65,
       duration: 2800,
       essential: true,
     })

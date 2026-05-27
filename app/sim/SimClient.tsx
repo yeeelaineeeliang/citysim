@@ -41,17 +41,13 @@ const SimulationMap = dynamic(
   () => import("@/components/SimulationMap").then((m) => m.SimulationMap),
   { ssr: false, loading: () => <div className="h-full w-full animate-pulse bg-white/20" /> },
 );
-const StreetViewPanorama = dynamic(
-  () => import("@/components/StreetViewPanorama").then((m) => m.StreetViewPanorama),
+const MapillaryStreetView = dynamic(
+  () => import("@/components/MapillaryStreetView").then((m) => m.MapillaryStreetView),
   { ssr: false, loading: () => <div className="h-full w-full animate-pulse bg-[#1a2530]" /> },
 );
 const AnimatedSimMap = dynamic(
   () => import("@/components/AnimatedSimMap").then((m) => m.AnimatedSimMap),
   { ssr: false, loading: () => <div className="h-full w-full animate-pulse bg-[#1a2530]" /> },
-);
-const CityViewScene = dynamic(
-  () => import("@/components/CityViewScene").then((m) => m.CityViewScene),
-  { ssr: false, loading: () => <div className="absolute inset-0 bg-[#0d1520]" /> },
 );
 const DailyLifePanel = dynamic(
   () => import("@/components/DailyLifePanel").then((m) => m.DailyLifePanel),
@@ -608,14 +604,15 @@ export function SimClient({ demoMode = false }: Readonly<SimClientProps>) {
           const streetHour = Math.round(7 + timeProgress * 16); // 7 AM → 11 PM arc
           return (
             <div data-testid="sim-avatar-scene" className="relative min-h-0 flex-1 overflow-hidden bg-black">
-              {/* Layer 1: Street View — primary full-screen visual */}
+              {/* Layer 1: Mapillary street imagery — primary full-screen visual */}
               <div className="absolute inset-0">
-                <StreetViewPanorama
+                <MapillaryStreetView
                   lat={(streetViewCoords ?? sceneCoords).lat}
                   lng={(streetViewCoords ?? sceneCoords).lng}
                   month={sceneMonth}
                   hourOfDay={streetHour}
                   targetHeading={streetViewHeading}
+                  neighborhoodName={neighborhood}
                   enableDrift
                 />
               </div>
@@ -712,7 +709,7 @@ export function SimClient({ demoMode = false }: Readonly<SimClientProps>) {
                       mapActions={activeMapActions}
                     />
                   ) : sceneCoords && runState === "idle" ? (
-                    <StreetViewPanorama lat={sceneCoords.lat} lng={sceneCoords.lng} month={month} />
+                    <MapillaryStreetView lat={sceneCoords.lat} lng={sceneCoords.lng} month={month} neighborhoodName={neighborhood} />
                   ) : (
                     <Skybox
                       month={month}
