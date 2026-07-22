@@ -3,6 +3,9 @@
 import dynamic from "next/dynamic"
 import { useEffect, useMemo, useRef, useState } from "react"
 import { Skybox } from "./Skybox"
+import { sunLight, compassLabel, timeLabel } from "@/lib/sunPosition"
+import type { Viewer as MapillaryViewer } from "mapillary-js"
+import "mapillary-js/dist/mapillary.css"
 
 const CityViewScene = dynamic(
   () => import("./CityViewScene").then((m) => m.CityViewScene),
@@ -53,23 +56,25 @@ function timeOfDayStyle(hour: number, month: number): { background: string; opac
 
 export function MapillaryStreetView({ lat, lng, month, hourOfDay = 12, neighborhoodName = "" }: Props) {
   const [sequence, setSequence] = useState<SeqItem[]>([])
-  const [currentIdx, setCurrentIdx] = useState(0)
   const [noImagery, setNoImagery] = useState(false)
-  const [crossfading, setCrossfading] = useState(false)
-  const prevIdx = useRef(currentIdx)
+  const [viewerBearing, setViewerBearing] = useState<number | null>(null)
+  const [viewerPosition, setViewerPosition] = useState<{ lat: number; lng: number } | null>(null)
+  const containerRef = useRef<HTMLDivElement>(null)
+  const viewerRef = useRef<MapillaryViewer | null>(null)
 
+  // GPS travel-direction bearing between first two photos (fallback until user pans)
   const heading = useMemo<number | null>(() => {
     if (sequence.length < 2) return null
-    const from = currentIdx > 0 ? sequence[currentIdx - 1] : sequence[0]
-    const to   = currentIdx > 0 ? sequence[currentIdx]     : sequence[1]
-    return computeBearing(from, to)
-  }, [sequence, currentIdx])
+    return computeBearing(sequence[0], sequence[1])
+  }, [sequence])
 
+  // Fetch image sequence for this location
   useEffect(() => {
     let cancelled = false
     setSequence([])
-    setCurrentIdx(0)
     setNoImagery(false)
+    setViewerBearing(null)
+    setViewerPosition(null)
 
     const controller = new AbortController()
     const timeout = setTimeout(() => controller.abort(), 6000)
@@ -95,15 +100,54 @@ export function MapillaryStreetView({ lat, lng, month, hourOfDay = 12, neighborh
     }
   }, [lat, lng])
 
+  // Create SDK Viewer when sequence is ready; destroy and recreate on location change
   useEffect(() => {
-    if (currentIdx === prevIdx.current) return
-    prevIdx.current = currentIdx
-    setCrossfading(true)
-    const t = setTimeout(() => setCrossfading(false), 150)
-    return () => clearTimeout(t)
-  }, [currentIdx])
+    if (!containerRef.current || sequence.length === 0) return
+
+    let cancelled = false
+
+    import("mapillary-js").then(({ Viewer }) => {
+      if (cancelled || !containerRef.current) return
+
+      viewerRef.current?.remove()
+
+      const viewer = new Viewer({
+        accessToken: process.env.NEXT_PUBLIC_MAPILLARY_TOKEN ?? "",
+        container: containerRef.current,
+        imageId: sequence[0].id,
+        component: { cover: false, sequence: false },
+      })
+
+      // Track live camera bearing so the minimap cone stays in sync
+      viewer.on("bearing", (e: { bearing: number }) => {
+        setViewerBearing(e.bearing)
+      })
+
+      // Track exact image position so the minimap dot moves as user walks
+      viewer.on("image", (e: { image: { lngLat: { lat: number; lng: number } } }) => {
+        setViewerPosition({ lat: e.image.lngLat.lat, lng: e.image.lngLat.lng })
+      })
+
+      viewerRef.current = viewer
+    })
+
+    return () => {
+      cancelled = true
+      setViewerBearing(null)
+    }
+  }, [sequence])
+
+  // Destroy viewer on unmount
+  useEffect(() => {
+    return () => {
+      viewerRef.current?.remove()
+      viewerRef.current = null
+    }
+  }, [])
 
   const timeProgress = Math.max(0, Math.min(1, (hourOfDay - 7) / 16))
+  const sun = sunLight(timeProgress, month, lat, lng)
+  const sunVisible = sun.altitude > 0
 
   if (noImagery) {
     return (
@@ -126,17 +170,14 @@ export function MapillaryStreetView({ lat, lng, month, hourOfDay = 12, neighborh
     )
   }
 
-  const current = sequence[currentIdx]
+  const fallback = sequence[0]
   const tint = timeOfDayStyle(hourOfDay, month)
+  const displayBearing = viewerBearing ?? heading
 
   return (
     <div className="relative h-full w-full">
-      <iframe
-        key={current.id}
-        src={`https://www.mapillary.com/embed?image_key=${current.id}&is_panoramic_viewer=true&component_imageNavigation=false&component_sequence=false`}
-        className="absolute inset-0 h-full w-full border-0"
-        allowFullScreen
-      />
+      {/* Mapillary SDK renders into this container */}
+      <div ref={containerRef} className="absolute inset-0 h-full w-full" />
 
       {/* Time-of-day tint */}
       {tint && (
@@ -151,72 +192,54 @@ export function MapillaryStreetView({ lat, lng, month, hourOfDay = 12, neighborh
         />
       )}
 
-      {/* Crossfade flash on navigation */}
-      {crossfading && (
-        <div
-          style={{
-            position: 'absolute', inset: 0, zIndex: 25,
-            background: 'rgb(0,0,0)',
-            opacity: 0.45,
-            pointerEvents: 'none',
-          }}
-        />
-      )}
+      {/* Sun compass — bottom-left, away from minimap */}
+      <div
+        className="pointer-events-none absolute bottom-8 left-3 z-20 flex flex-col items-start gap-1.5"
+        style={{ opacity: sunVisible ? 1 : 0.35, transition: 'opacity 0.8s ease' }}
+      >
+        <div className="rounded-full border border-white/20 bg-black/50 p-2 backdrop-blur-sm">
+          <svg width="36" height="36" viewBox="-18 -18 36 36">
+            <circle r="13" fill="none" stroke="rgba(255,255,255,0.15)" strokeWidth="1" />
+            <line
+              x1="0" y1="0"
+              x2={Math.sin(sun.azimuthDeg * Math.PI / 180) * 11}
+              y2={-Math.cos(sun.azimuthDeg * Math.PI / 180) * 11}
+              stroke={sunVisible ? '#fbbf24' : '#6b7280'}
+              strokeWidth="2"
+              strokeLinecap="round"
+            />
+            <circle
+              cx={Math.sin(sun.azimuthDeg * Math.PI / 180) * 11}
+              cy={-Math.cos(sun.azimuthDeg * Math.PI / 180) * 11}
+              r="2.5"
+              fill={sunVisible ? '#fbbf24' : '#6b7280'}
+            />
+            <text textAnchor="middle" y="5" fontSize="5" fill="rgba(255,255,255,0.5)" fontFamily="system-ui">N</text>
+          </svg>
+        </div>
+        <div className="rounded-md border border-white/15 bg-black/50 px-2 py-1 backdrop-blur-sm">
+          <p className="text-[10px] font-semibold leading-tight text-white/80">
+            {timeLabel(timeProgress)} · {sunVisible ? compassLabel(sun.azimuthDeg) + ' light' : 'Night'}
+          </p>
+        </div>
+      </div>
 
-      {/* ← navigation button */}
-      {currentIdx > 0 && (
-        <button
-          onClick={() => setCurrentIdx((i) => i - 1)}
-          style={{
-            position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)',
-            zIndex: 30, width: 40, height: 40, borderRadius: '50%',
-            background: 'rgba(0,0,0,0.50)', color: '#fff',
-            border: 'none', cursor: 'pointer', fontSize: 18,
-            backdropFilter: 'blur(4px)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            pointerEvents: 'auto',
-          }}
-          aria-label="Previous image"
-        >
-          ←
-        </button>
-      )}
-
-      {/* → navigation button */}
-      {currentIdx < sequence.length - 1 && (
-        <button
-          onClick={() => setCurrentIdx((i) => i + 1)}
-          style={{
-            position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)',
-            zIndex: 30, width: 40, height: 40, borderRadius: '50%',
-            background: 'rgba(0,0,0,0.50)', color: '#fff',
-            border: 'none', cursor: 'pointer', fontSize: 18,
-            backdropFilter: 'blur(4px)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            pointerEvents: 'auto',
-          }}
-          aria-label="Next image"
-        >
-          →
-        </button>
-      )}
-
-      {/* Neighborhood overview mini-map */}
+      {/* Neighborhood overview mini-map — bearing and position track live viewer state */}
       {neighborhoodName && (
         <div
           style={{
             position: 'absolute', bottom: 14, right: 14, zIndex: 20,
-            width: 200, height: 140,
-            borderRadius: 10, overflow: 'hidden',
-            border: '1.5px solid rgba(255,255,255,0.30)',
-            boxShadow: '0 4px 20px rgba(0,0,0,0.55)',
+            width: 240, height: 180,
+            borderRadius: 8, overflow: 'hidden',
+            border: '1px solid rgba(255,255,255,0.20)',
+            boxShadow: '0 2px 16px rgba(0,0,0,0.60)',
           }}
         >
           <NeighborhoodMiniMap
             neighborhoodName={neighborhoodName}
-            currentLat={current.lat}
-            currentLng={current.lng}
-            heading={heading}
+            currentLat={viewerPosition?.lat ?? fallback.lat}
+            currentLng={viewerPosition?.lng ?? fallback.lng}
+            heading={displayBearing}
           />
         </div>
       )}

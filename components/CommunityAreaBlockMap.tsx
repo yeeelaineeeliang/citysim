@@ -23,6 +23,16 @@ import {
   getFallbackCommunityAreas,
   type CommunityAreaMapArea,
 } from "@/lib/communityAreaMap";
+import {
+  MATCH_RANK_BADGE_STROKE,
+  MATCH_RANK_BADGE_SURFACE,
+  MATCH_RANK_BADGE_TEXT,
+  MATCH_RANK_SELECTED_STROKE,
+  matchRankColor,
+  matchRankFillOpacity,
+  matchRankStrokeColor,
+  matchRankWeight,
+} from "@/lib/matchRankColors";
 import type { UserProfile } from "@/lib/tools/types";
 
 export interface CommunityAreaMapMatch {
@@ -81,35 +91,33 @@ interface CommunityAreaPreview {
 }
 
 const COLORS = {
-  ink: "#263126",
-  muted: "#66715f",
-  cream: "#fff9ee",
-  line: "#f4e6d3",
-  outline: "#3f4c37",
-  sage: "#6f8d5f",
-  sageSoft: "#dbe4cf",
-  sageStrong: "#4f6f45",
-  terracotta: "#c76545",
-  amber: "#e7ad4e",
-  amberSoft: "#f4d49a",
-  dimFill: "#d7d5cc",
-  dimStroke: "#8f9187",
+  ink: "#111315",
+  muted: "#6e7474",
+  cream: "#fbf8f2",
+  line: "#e5ded3",
+  outline: "#3b4143",
+  sage: "#6f9b8b",
+  sageSoft: "#dce9e4",
+  sageStrong: "#476f63",
+  terracotta: "#b95f3f",
+  amber: "#d5a547",
+  amberSoft: "#ead5a6",
+  dimFill: "#dad8d3",
+  dimStroke: "#8b9090",
 };
 
 const AREA_PALETTE = [
-  { fill: "#d9e4cc", stroke: "#789365" }, // sage
-  { fill: "#d7dfba", stroke: "#7d8e45" }, // moss
-  { fill: "#f2d4c4", stroke: "#c76545" }, // clay
-  { fill: "#f4d99d", stroke: "#d59b36" }, // amber
-  { fill: "#e6dfb6", stroke: "#9b9552" }, // olive
-  { fill: "#f4cdb4", stroke: "#d18454" }, // peach
-  { fill: "#c9ded7", stroke: "#5f9085" }, // muted teal
-  { fill: "#ead0cd", stroke: "#bd7471" }, // soft rose
-  { fill: "#d4e0be", stroke: "#6f8d5f" },
-  { fill: "#f0ddbf", stroke: "#b9874d" },
+  { fill: "#d9e8e2", stroke: "#6f9b8b" },
+  { fill: "#e8e0c9", stroke: "#a88743" },
+  { fill: "#ead7d1", stroke: "#b95f3f" },
+  { fill: "#e9dfc6", stroke: "#d5a547" },
+  { fill: "#d9dfe8", stroke: "#536a8a" },
+  { fill: "#e5d7d1", stroke: "#9e6b5a" },
+  { fill: "#d2dfdc", stroke: "#5f8177" },
+  { fill: "#ddd9e3", stroke: "#706988" },
+  { fill: "#dce5df", stroke: "#66897e" },
+  { fill: "#e7ded2", stroke: "#9a7b57" },
 ];
-
-const RANK_COLORS = ["#C76545", "#D09B36", "#4F6F45", "#5F9085", "#BD7471"];
 
 const INITIAL_AREAS = getFallbackCommunityAreas();
 const previewCache = new Map<string, CommunityAreaPreview>();
@@ -194,8 +202,11 @@ function escapeHtml(value: string) {
 }
 
 function rankColor(rank?: number) {
-  if (!rank || rank < 1) return COLORS.sageStrong;
-  return RANK_COLORS[rank - 1] ?? RANK_COLORS[RANK_COLORS.length - 1] ?? COLORS.sageStrong;
+  return rank ? matchRankColor(rank) : COLORS.sageStrong;
+}
+
+function rankStrokeColor(rank?: number) {
+  return rank ? matchRankStrokeColor(rank) : COLORS.sageStrong;
 }
 
 function mapLabelName(name: string) {
@@ -225,7 +236,9 @@ function areaStyle({
   dimmed?: boolean;
 }) {
   const matchColor = matchRank ? rankColor(matchRank) : null;
-  const stateColor = searched ? COLORS.amber : matchColor ?? areaColor.stroke;
+  const matchStrokeColor = matchRank ? rankStrokeColor(matchRank) : null;
+  const matchFillOpacity = matchRank ? matchRankFillOpacity(matchRank) : null;
+  const stateColor = searched ? COLORS.amber : matchStrokeColor ?? areaColor.stroke;
   if (dimmed && !selected && !hovered && !searched) {
     return {
       color: COLORS.dimStroke,
@@ -239,9 +252,21 @@ function areaStyle({
   return {
     color: selected ? stateColor : hovered || searched || matchRank ? stateColor : areaColor.stroke,
     fillColor: matchColor ?? areaColor.fill,
-    fillOpacity: selected ? 0.42 : hovered ? 0.34 : searched ? 0.32 : matchRank ? 0.28 : 0.72,
+    fillOpacity: selected
+      ? Math.min((matchFillOpacity ?? 0.42) + (matchFillOpacity ? 0.1 : 0), 0.62)
+      : hovered && matchFillOpacity
+        ? Math.min(matchFillOpacity + 0.08, 1.0)
+        : searched && matchFillOpacity
+          ? Math.min(matchFillOpacity + 0.05, 0.55)
+          : hovered
+            ? 0.34
+            : searched
+              ? 0.32
+              : matchFillOpacity ?? 0.72,
     opacity: selected || hovered || searched || matchRank ? 0.95 : 0.78,
-    weight: selected ? 2.5 : searched ? 2 : hovered || matchRank ? 1.75 : 0.9,
+    weight: matchRank
+      ? matchRankWeight(matchRank) + (hovered ? 1 : 0)
+      : selected ? 2.5 : searched ? 2 : hovered ? 1.75 : 0.9,
   };
 }
 
@@ -279,7 +304,7 @@ function geoJsonFeatures(
 }
 
 function rankBadgeIcon(match: CommunityAreaMapMatch, selected: boolean) {
-  const color = rankColor(match.rank);
+  const strokeColor = selected ? MATCH_RANK_SELECTED_STROKE : MATCH_RANK_BADGE_STROKE;
   return L.divIcon({
     className: "community-area-rank-badge-marker",
     html: `<div style="
@@ -288,7 +313,7 @@ function rankBadgeIcon(match: CommunityAreaMapMatch, selected: boolean) {
     ">
       <div style="
         display:inline-flex;align-items:center;gap:7px;max-width:168px;
-        border:${selected ? 2 : 1.5}px solid ${color};
+        border:${selected ? 2 : 1.5}px solid ${strokeColor};
         border-radius:999px;background:rgba(255,249,238,0.97);
         color:${COLORS.ink};padding:4px 10px 4px 4px;
         box-shadow:${selected ? "0 6px 16px rgba(38,49,38,0.22)" : "0 4px 12px rgba(38,49,38,0.16)"};
@@ -296,8 +321,9 @@ function rankBadgeIcon(match: CommunityAreaMapMatch, selected: boolean) {
       ">
         <span style="
           display:flex;align-items:center;justify-content:center;flex:0 0 auto;
-          width:28px;height:28px;border-radius:999px;background:${color};
-          color:white;font-size:12px;font-weight:850;line-height:1;
+          width:28px;height:28px;border-radius:999px;background:${MATCH_RANK_BADGE_SURFACE};
+          border:1px solid ${MATCH_RANK_BADGE_STROKE};
+          color:${MATCH_RANK_BADGE_TEXT};font-size:12px;font-weight:850;line-height:1;
         ">${match.rank}</span>
         <span style="
           min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
@@ -314,12 +340,22 @@ function workplaceIcon() {
   return L.divIcon({
     className: "community-area-workplace-dot-marker",
     html: `<div style="
-      width:14px;height:14px;border-radius:999px;
+      width:20px;height:20px;border-radius:999px;
       background:${COLORS.terracotta};border:2px solid ${COLORS.cream};
-      box-shadow:0 0 0 2px rgba(199,101,69,0.24),0 4px 10px rgba(38,49,38,0.22);
-    "></div>`,
-    iconSize: [14, 14],
-    iconAnchor: [7, 7],
+      box-shadow:0 0 0 3px rgba(199,101,69,0.28),0 4px 12px rgba(38,49,38,0.28);
+      display:flex;align-items:center;justify-content:center;
+    ">
+      <svg width="11" height="11" viewBox="0 0 11 11" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <rect x="1" y="4" width="9" height="7" rx="0.8" fill="${COLORS.cream}" fill-opacity="0.92"/>
+        <rect x="2.5" y="1" width="6" height="4.5" rx="0.6" fill="${COLORS.cream}" fill-opacity="0.92"/>
+        <rect x="3.5" y="5.5" width="1.5" height="1.5" rx="0.2" fill="${COLORS.terracotta}"/>
+        <rect x="6" y="5.5" width="1.5" height="1.5" rx="0.2" fill="${COLORS.terracotta}"/>
+        <rect x="3.5" y="2.2" width="1.5" height="1.5" rx="0.2" fill="${COLORS.terracotta}"/>
+        <rect x="6" y="2.2" width="1.5" height="1.5" rx="0.2" fill="${COLORS.terracotta}"/>
+      </svg>
+    </div>`,
+    iconSize: [20, 20],
+    iconAnchor: [10, 10],
   });
 }
 
@@ -336,17 +372,19 @@ function workplaceCalloutIcon(label: string) {
   return L.divIcon({
     className: "community-area-workplace-callout-marker",
     html: `<div style="
-      display:flex;align-items:center;justify-content:center;
-      min-width:86px;max-width:154px;height:30px;padding:0 12px;
-      border:1.5px solid ${COLORS.terracotta};border-radius:999px;
+      display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;
+      min-width:86px;max-width:154px;height:44px;padding:0 14px;
+      border:1.5px solid ${COLORS.terracotta};border-radius:12px;
       background:rgba(255,249,238,0.98);color:${COLORS.ink};
       box-shadow:0 5px 14px rgba(38,49,38,0.18);
       font-family:'Avenir Next','Segoe UI Rounded',system-ui,sans-serif;
-      font-size:12px;font-weight:850;line-height:1;white-space:nowrap;
-      overflow:hidden;text-overflow:ellipsis;
-    ">${escapeHtml(label)}</div>`,
-    iconSize: [132, 30],
-    iconAnchor: [66, 15],
+      line-height:1.2;white-space:nowrap;overflow:hidden;
+    ">
+      <span style="font-size:12px;font-weight:850;text-overflow:ellipsis;overflow:hidden;max-width:126px;">${escapeHtml(label)}</span>
+      <span style="font-size:10px;font-weight:600;color:${COLORS.muted};letter-spacing:0.02em;">Frequent place</span>
+    </div>`,
+    iconSize: [132, 44],
+    iconAnchor: [66, 22],
   });
 }
 
@@ -454,18 +492,108 @@ function FitMap({
   return null;
 }
 
+// Leaflet map instances can be mid-teardown when these effects run (the match
+// step is revisitable now — verdict "Try another neighborhood" and the season
+// ticket's "Back to matches" remount this map). Guard on _controlCorners,
+// which Leaflet deletes when the map is destroyed.
+function mapIsLive(map: L.Map): boolean {
+  return Boolean((map as unknown as { _controlCorners?: unknown })._controlCorners);
+}
+
 function MapZoomControl() {
   const map = useMap();
 
   useEffect(() => {
+    if (!mapIsLive(map)) return;
     const control = L.control.zoom({ position: "bottomleft" });
     control.addTo(map);
     return () => {
-      control.remove();
+      try {
+        control.remove();
+      } catch { /* map already destroyed */ }
     };
   }, [map]);
 
   return null;
+}
+
+function MapLegend({ show }: { show: boolean }) {
+  const map = useMap();
+
+  useEffect(() => {
+    if (!show) return;
+    const LegendControl = L.Control.extend({
+      onAdd() {
+        const div = L.DomUtil.create("div");
+        div.innerHTML = `<div style="
+          background:rgba(255,255,255,0.90);border-radius:6px;
+          padding:6px 9px;font-size:11px;line-height:1.75;
+          font-family:'Avenir Next','Segoe UI Rounded',system-ui,sans-serif;
+          color:#263126;
+        ">
+          <div style="display:flex;align-items:center;gap:7px">
+            <span style="width:12px;height:12px;border-radius:2px;background:#1d7a3a;display:inline-block;flex-shrink:0"></span>#1 Best match
+          </div>
+          <div style="display:flex;align-items:center;gap:7px">
+            <span style="width:12px;height:12px;border-radius:2px;background:#ba7517;display:inline-block;flex-shrink:0"></span>#2
+          </div>
+          <div style="display:flex;align-items:center;gap:7px">
+            <span style="width:12px;height:12px;border-radius:2px;background:#888780;display:inline-block;flex-shrink:0"></span>#3
+          </div>
+          <div style="display:flex;align-items:center;gap:7px">
+            <span style="width:12px;height:12px;border-radius:2px;background:#444441;opacity:0.50;display:inline-block;flex-shrink:0"></span>#4–5 Weaker fit
+          </div>
+        </div>`;
+        return div;
+      },
+    });
+    if (!mapIsLive(map)) return;
+    const legend = new LegendControl({ position: "bottomleft" });
+    legend.addTo(map);
+    return () => {
+      try {
+        legend.remove();
+      } catch { /* map already destroyed */ }
+    };
+  }, [map, show]);
+
+  return null;
+}
+
+function CommuteSpokes({
+  rankedLabels,
+  workplaceCoords,
+  selectedArea,
+}: {
+  rankedLabels: { area: CommunityAreaMapArea; match: CommunityAreaMapMatch }[];
+  workplaceCoords: MapPoint;
+  selectedArea: CommunityAreaMapArea | null;
+}) {
+  return (
+    <>
+      {rankedLabels.map(({ area, match }) => {
+        const isSelected =
+          area.communityAreaNumber === selectedArea?.communityAreaNumber ||
+          area.name.toLowerCase() === selectedArea?.name.toLowerCase();
+        return (
+          <Polyline
+            key={`commute-spoke-${match.communityAreaNumber}-${isSelected ? "sel" : "unsel"}`}
+            positions={[
+              [area.lat, area.lng],
+              [workplaceCoords.lat, workplaceCoords.lng],
+            ]}
+            pathOptions={{
+              color: isSelected ? COLORS.terracotta : COLORS.ink,
+              opacity: isSelected ? 0.75 : 0.18,
+              weight: isSelected ? 2 : 1,
+              dashArray: "4 9",
+            }}
+            interactive={false}
+          />
+        );
+      })}
+    </>
+  );
 }
 
 function RankedMatchBadges({
@@ -634,6 +762,9 @@ export function CommunityAreaBlockMap({
   year = 2024,
 }: CommunityAreaBlockMapProps) {
   const [areas, setAreas] = useState<CommunityAreaMapArea[]>(INITIAL_AREAS);
+  // Fresh identity per mount: the match step is revisitable, and Leaflet
+  // refuses to initialize a container DOM node it has seen before.
+  const [mapInstanceKey] = useState(() => `block-map-${Math.random().toString(36).slice(2)}`);
   const [query, setQuery] = useState("");
   const [hoveredArea, setHoveredArea] = useState<number | null>(null);
   const [boundaryStatus, setBoundaryStatus] = useState<"loading" | "ready" | "unavailable">("loading");
@@ -864,6 +995,7 @@ export function CommunityAreaBlockMap({
 
         <div className="atlas-map-shell relative min-h-0 flex-1 overflow-hidden rounded-[var(--radius-lg)] border border-[color:var(--panel-border)] bg-[color:var(--sage-50)] shadow-sm">
           <MapContainer
+            key={mapInstanceKey}
             center={[41.878, -87.69]}
             zoom={10}
             className="h-full min-h-[500px] w-full"
@@ -873,6 +1005,7 @@ export function CommunityAreaBlockMap({
             scrollWheelZoom
           >
             <MapZoomControl />
+            <MapLegend show={mode === "match" && matches.length > 0} />
             <TileLayer
               url="https://{s}.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}{r}.png"
               attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>'
@@ -944,6 +1077,14 @@ export function CommunityAreaBlockMap({
                 </GeoJSONLayer>
               );
             })}
+
+            {workplaceCoords && rankedLabelAreas.length > 0 && (
+              <CommuteSpokes
+                rankedLabels={rankedLabelAreas}
+                workplaceCoords={workplaceCoords}
+                selectedArea={selectedArea ?? null}
+              />
+            )}
 
             <RankedMatchBadges
               areas={badgeSourceAreas}
@@ -1057,7 +1198,7 @@ export function CommunityAreaBlockMap({
             onClick={() => selectedArea && onConfirm(selectedArea.name)}
             className="atlas-button-primary mt-1 w-full disabled:cursor-not-allowed disabled:opacity-55"
           >
-            Simulate {selectedArea?.name ?? "neighborhood"}
+            Live a year in {selectedArea?.name ?? "this neighborhood"} →
           </button>
           </div>
         </div>

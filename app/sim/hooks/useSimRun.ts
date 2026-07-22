@@ -46,22 +46,20 @@ export function useSimRun({
   const [completedMonths, setCompletedMonths] = useState<number[]>([]);
   const [autoRunMonth, setAutoRunMonth] = useState<number | null>(null);
   const [autoRunNarrative, setAutoRunNarrative] = useState<string>("");
-  const [isSeasonTransitioning, setIsSeasonTransitioning] = useState(false);
   const [isAnimatingCommute, setIsAnimatingCommute] = useState(false);
   const [routeCoords, setRouteCoords] = useState<[number, number][]>([]);
   const [commuteRouteCoords, setCommuteRouteCoords] = useState<[number, number][]>([]);
-  const [timeProgress, setTimeProgress] = useState(0);
   const [dailySchedule, setDailySchedule] = useState<DayEvent[]>([]);
   const [currentEvent, setCurrentEvent] = useState<DayEvent | null>(null);
   const [streetViewCoords, setStreetViewCoords] = useState<{ lat: number; lng: number } | null>(null);
   const [streetViewHeading, setStreetViewHeading] = useState(0);
-
-  // Four seasonal snapshots — Jan, Apr, Jul, Oct
-  const SEASONS = [1, 4, 7, 10];
-
-  const [waitingForContinue, setWaitingForContinue] = useState(false);
-  const [summaryNarrative, setSummaryNarrative] = useState("");
-  const [summaryMonth, setSummaryMonth] = useState<number | null>(null);
+  const [monthNarratives, setMonthNarratives] = useState<Record<number, string>>({});
+  const [monthSummaries, setMonthSummaries] = useState<Record<number, string>>({});
+  const [monthDataSummary, setMonthDataSummary] = useState<{
+    crime: number | null;
+    transitRiders: number | null;
+    requests311: number | null;
+  } | null>(null);
 
   const runStateRef = useRef<RunState>("idle");
   const monthSummariesRef = useRef<Record<number, string>>({});
@@ -70,7 +68,6 @@ export function useSimRun({
   const prefetchActionsRef = useRef<MapAction[] | null>(null);
   const prefetchDoneRef = useRef(false);
   const narrativeRef = useRef("");
-  const continueResolveRef = useRef<(() => void) | null>(null);
 
   // Fetch commute geometry once per (neighborhood x workplace). Transit uses the
   // local CTA GTFS route API; OSRM remains for walking/driving/biking only.
@@ -148,7 +145,6 @@ export function useSimRun({
     if (runState === "idle" || !currentEvent) return;
     if (currentEvent.kind === "transit") return;
 
-    // Use the event's actual coordinates — these already point to real named places
     const coord = { lat: currentEvent.location.lat, lng: currentEvent.location.lng };
 
     if (prevDwellCoordsRef.current) {
@@ -165,13 +161,12 @@ export function useSimRun({
 
     let cancelled = false;
     const abortController = new AbortController();
-    let clockId: ReturnType<typeof setInterval> | null = null;
 
     async function drainSSE(
       res: Response,
       m: number,
       onTools: (actions: MapAction[]) => void,
-      onChunk: (token: string) => void,
+      onChunk: (text: string) => void,
     ): Promise<string> {
       const reader = res.body!.getReader();
       const decoder = new TextDecoder();
@@ -193,12 +188,14 @@ export function useSimRun({
               type: string;
               mapActions?: MapAction[];
               toolsUsed?: string[];
+              dataSummary?: { crime: number | null; transitRiders: number | null; requests311: number | null };
               text?: string;
             };
             if (evt.type === "tools" && !toolsReceived) {
               toolsReceived = true;
               const actions = evt.mapActions ?? [];
               if (actions.length) onTools(actions);
+              if (evt.dataSummary) setMonthDataSummary(evt.dataSummary);
 
               // Kick off prefetch for N+1 as soon as tools phase is done
               if (m < 12 && !cancelled) {
@@ -223,8 +220,9 @@ export function useSimRun({
                       const ln = p.split("\n").find((l) => l.startsWith("data: "));
                       if (!ln) continue;
                       try {
-                        const e = JSON.parse(ln.slice(6)) as { type: string; mapActions?: MapAction[]; text?: string };
+                        const e = JSON.parse(ln.slice(6)) as { type: string; mapActions?: MapAction[]; dataSummary?: { crime: number | null; transitRiders: number | null; requests311: number | null }; text?: string };
                         if (e.type === "tools" && e.mapActions) prefetchActionsRef.current = e.mapActions;
+                        if (e.type === "tools" && e.dataSummary) setMonthDataSummary(e.dataSummary);
                         if (e.type === "chunk" && e.text) prefetchChunksRef.current.push(e.text);
                         if (e.type === "done") prefetchDoneRef.current = true;
                       } catch { /* skip */ }
@@ -246,16 +244,8 @@ export function useSimRun({
     async function processMonth() {
       const m = autoRunMonth!;
       setAutoRunNarrative("");
-      setTimeProgress(0);
+      setMonthDataSummary(null);
       let fullNarrative = "";
-
-      // Tick-based clock — advances 0→1 over 60s regardless of stream speed
-      const clockStart = Date.now();
-      const MONTH_MS = 60000;
-      clockId = setInterval(() => {
-        if (cancelled) { if (clockId) clearInterval(clockId); clockId = null; return; }
-        setTimeProgress(Math.min(1, (Date.now() - clockStart) / MONTH_MS));
-      }, 120);
 
       const hasPrefetch = prefetchChunksRef.current.length > 0;
 
@@ -318,56 +308,36 @@ export function useSimRun({
         } catch { /* continue even on error */ }
       }
 
-      if (clockId) { clearInterval(clockId); clockId = null; }
       if (cancelled) return;
 
       if (fullNarrative) {
+        setMonthNarratives((prev) => ({ ...prev, [m]: fullNarrative }));
         setMessages((prev) => [...prev, createSimMessage("assistant", fullNarrative, m, "answer")]);
         const sentences = fullNarrative.match(/[^.!?]+[.!?]+/g) ?? [];
         const summary = sentences.slice(0, 2).join(" ").trim();
-        if (summary) monthSummariesRef.current = { ...monthSummariesRef.current, [m]: summary };
+        if (summary) {
+          monthSummariesRef.current = { ...monthSummariesRef.current, [m]: summary };
+          setMonthSummaries({ ...monthSummariesRef.current });
+        }
       }
-
-      await new Promise<void>((resolve) => setTimeout(resolve, 800));
-      if (cancelled) return;
 
       setCompletedMonths((prev) => [...prev, m]);
       setMonth(m);
 
-      const nextM = SEASONS[SEASONS.indexOf(m) + 1] ?? null;
+      // Pause-aware 3-second delay before advancing to next month
+      let waited = 0;
+      while (!cancelled && waited < 3000) {
+        await new Promise((r) => setTimeout(r, 100));
+        if (runStateRef.current !== "paused") waited += 100;
+      }
+      if (cancelled) return;
+
+      const nextM = m < 12 ? m + 1 : null;
 
       if (nextM !== null) {
-        // Season transition card — slides in while Street View crossfades behind it
         setAutoRunMonth(nextM);
-        setIsSeasonTransitioning(true);
-        await new Promise<void>((resolve) => setTimeout(resolve, 2800));
-        if (cancelled) return;
-        setIsSeasonTransitioning(false);
-
-        // Pause for "Month in Review" — user must click Continue before next month starts
-        setSummaryNarrative(fullNarrative);
-        setSummaryMonth(m);
-        setWaitingForContinue(true);
-        await new Promise<void>((resolve) => { continueResolveRef.current = resolve; });
-        if (cancelled) return;
-        setWaitingForContinue(false);
-        continueResolveRef.current = null;
       } else {
-        // Last month — brief pause before year-complete state
-        setSummaryNarrative(fullNarrative);
-        setSummaryMonth(m);
-        setWaitingForContinue(true);
-        await new Promise<void>((resolve) => { continueResolveRef.current = resolve; });
-        if (cancelled) return;
-        setWaitingForContinue(false);
-        continueResolveRef.current = null;
-        await new Promise<void>((resolve) => setTimeout(resolve, 300));
-        if (cancelled) return;
-      }
-
-      if (runStateRef.current !== "running") return;
-
-      if (nextM === null) {
+        if (runStateRef.current !== "running") return;
         setRunState("done");
         runStateRef.current = "done";
         setAutoRunMonth(null);
@@ -378,7 +348,6 @@ export function useSimRun({
     return () => {
       cancelled = true;
       abortController.abort();
-      if (clockId) { clearInterval(clockId); clockId = null; }
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [runState, autoRunMonth]);
@@ -395,15 +364,14 @@ export function useSimRun({
     runStateRef.current = "running";
     setCompletedMonths([]);
     setAutoRunNarrative("");
+    setMonthDataSummary(null);
     prefetchChunksRef.current = [];
     prefetchActionsRef.current = null;
     prefetchDoneRef.current = false;
     monthSummariesRef.current = {};
-    setWaitingForContinue(false);
-    setSummaryNarrative("");
-    setSummaryMonth(null);
-    continueResolveRef.current = null;
-    setAutoRunMonth(SEASONS[0] ?? 1);
+    setMonthSummaries({});
+    setMonthNarratives({});
+    setAutoRunMonth(1);
   }
 
   function togglePause() {
@@ -424,19 +392,15 @@ export function useSimRun({
     runStateRef.current = "idle";
     setAutoRunMonth(null);
     setIsAnimatingCommute(false);
+    setMonthDataSummary(null);
     setSceneMode("street");
     setStreetViewCoords(null);
     setStreetViewHeading(0);
     prevDwellCoordsRef.current = null;
-    setWaitingForContinue(false);
-    setSummaryNarrative("");
-    setSummaryMonth(null);
-    continueResolveRef.current?.();
-    continueResolveRef.current = null;
   }
 
   const continueMonth = useCallback(() => {
-    continueResolveRef.current?.();
+    // kept for API compatibility; no-op in new flow
   }, []);
 
   return {
@@ -444,11 +408,9 @@ export function useSimRun({
     completedMonths,
     autoRunMonth,
     autoRunNarrative,
-    isSeasonTransitioning,
     isAnimatingCommute,
     routeCoords,
     commuteRouteCoords,
-    timeProgress,
     dailySchedule,
     currentEvent, setCurrentEvent,
     streetViewCoords,
@@ -456,9 +418,9 @@ export function useSimRun({
     startAutoRun,
     togglePause,
     stopAutoRun,
-    waitingForContinue,
-    summaryNarrative,
-    summaryMonth,
     continueMonth,
+    monthSummaries,
+    monthNarratives,
+    monthDataSummary,
   };
 }

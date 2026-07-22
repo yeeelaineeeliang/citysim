@@ -1,13 +1,13 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { SignInButton, SignUpButton, useUser } from "@clerk/nextjs";
-import { ArrowLeft, CalendarDays, ListChecks, LockKeyhole, MapIcon, MessageCircle, Play, Send, Sparkles } from "lucide-react";
+import { useUser } from "@clerk/nextjs";
+import { ArrowLeft, CalendarDays, ListChecks, MapIcon, MessageCircle, Play, Send, Sparkles } from "lucide-react";
 import Link from "next/link";
 import { AuthActions } from "@/components/AuthActions";
+import { JourneyRail } from "@/components/JourneyRail";
 import { SeasonalStreetOverlay } from "@/components/SeasonalStreetOverlay";
 import { Skybox } from "@/components/Skybox";
-import { WeatherLayer } from "@/components/WeatherLayer";
 import {
   groupMessagesByMonth,
   monthGroupKey,
@@ -18,21 +18,38 @@ import dynamic from "next/dynamic";
 import { NEIGHBORHOOD_COORDINATES } from "@/lib/neighborhoodCoordinates";
 import type { CommunityAreaMapMatch } from "@/components/CommunityAreaBlockMap";
 import { DEMO_PROFILE, DEMO_NEIGHBORHOOD, DEMO_MONTH, DEMO_OPENING } from "@/lib/demoData";
+import {
+  MATCH_RANK_BADGE_STROKE,
+  MATCH_RANK_BADGE_SURFACE,
+  MATCH_RANK_BADGE_TEXT,
+  MATCH_RANK_SELECTED_STROKE,
+  MATCH_RANK_SELECTED_SURFACE,
+} from "@/lib/matchRankColors";
 import { useSimProfile } from "./hooks/useSimProfile";
 import { useSimChat } from "./hooks/useSimChat";
-import { useSimRun } from "./hooks/useSimRun";
+import { useSimAct } from "./hooks/useSimAct";
+import { usePrefersReducedMotion } from "./hooks/usePrefersReducedMotion";
+import { SimVerdict } from "@/components/SimVerdict";
 import { ProfileOnboardingShell } from "./ProfileOnboardingShell";
 import {
+  commuteModePhrase,
   createSimMessage,
+  displayWorkplaceContext,
   getProfileWorkplaceCoords,
   ALL_NEIGHBORHOODS,
   MONTH_NAMES,
-  MONTH_SHORT,
   SIM_YEAR,
   SUGGESTED_QUESTIONS,
 } from "./helpers";
-import type { AuthPromptReason, MobilePanel, SceneMode, Step } from "./types";
+import type { AuthPromptReason, IdleView, MobilePanel, SceneMode, SimAct, Step } from "./types";
+import { ACT_MONTH, ACT_SEASON, MONTH_TO_ACT, SEASON_ORDER } from "./types";
+import { AuthGateCard } from "./AuthGateCard";
+import { SeasonTicket } from "./SeasonTicket";
 
+const SimPlayerMap = dynamic(
+  () => import("@/components/SimPlayerMap").then((m) => m.SimPlayerMap),
+  { ssr: false, loading: () => <div className="h-full w-full animate-pulse bg-white/20" /> },
+);
 const CommunityAreaBlockMap = dynamic(
   () => import("@/components/CommunityAreaBlockMap").then((m) => m.CommunityAreaBlockMap),
   { ssr: false, loading: () => <div className="h-full w-full animate-pulse rounded-2xl bg-[color:var(--panel-border)]" /> },
@@ -45,41 +62,116 @@ const MapillaryStreetView = dynamic(
   () => import("@/components/MapillaryStreetView").then((m) => m.MapillaryStreetView),
   { ssr: false, loading: () => <div className="h-full w-full animate-pulse bg-[#1a2530]" /> },
 );
-const AnimatedSimMap = dynamic(
-  () => import("@/components/AnimatedSimMap").then((m) => m.AnimatedSimMap),
-  { ssr: false, loading: () => <div className="h-full w-full animate-pulse bg-[#1a2530]" /> },
-);
-const DailyLifePanel = dynamic(
-  () => import("@/components/DailyLifePanel").then((m) => m.DailyLifePanel),
+const CinematicStreetPano = dynamic(
+  () => import("@/components/CinematicStreetPano").then((m) => m.CinematicStreetPano),
   { ssr: false },
 );
-const SeasonTransitionCard = dynamic(
-  () => import("@/components/SeasonTransitionCard").then((m) => m.SeasonTransitionCard),
+const SeasonalAtmosphere = dynamic(
+  () => import("@/components/SeasonalAtmosphere").then((m) => m.SeasonalAtmosphere),
   { ssr: false },
-);
-const SimAvatarScene = dynamic(
-  () => import("@/components/SimAvatarScene").then((m) => m.SimAvatarScene),
-  { ssr: false, loading: () => <div className="absolute inset-0 bg-[#0d1520]" /> },
 );
 
 // ─── UI-only helpers ──────────────────────────────────────────────────────────
 
-const MATCH_RANK_COLORS = ["#295C88", "#3F78A5", "#5B95BD", "#7CB6D0", "#A7D6E3"];
-
-function matchRankColor(rank: number) {
-  return MATCH_RANK_COLORS[rank - 1] ?? MATCH_RANK_COLORS[MATCH_RANK_COLORS.length - 1] ?? "#6f8d5f";
+function seasonalTintForMonth(m: number): string {
+  if (m <= 3) return "rgba(200,220,255,0.08)";
+  if (m <= 6) return "rgba(120,200,120,0.06)";
+  if (m <= 9) return "rgba(255,200,50,0.08)";
+  return "rgba(180,120,60,0.10)";
 }
 
-function commuteModePhrase(mode?: UserProfile["commutePref"]) {
-  if (mode === "driving") return "drive";
-  if (mode === "walking") return "walk";
-  if (mode === "biking") return "bike";
-  return "by bus/transit";
+// Cinematic act tint = season + time of day (spring morning → winter night).
+// Applied over the live street pano, this carries the season shift between acts.
+const ACT_TINT: Record<SimAct, string> = {
+  1: "rgba(190,215,255,0.12)",
+  2: "rgba(255,215,130,0.12)",
+  3: "rgba(225,130,45,0.20)",
+  4: "rgba(8,15,40,0.52)",
+};
+
+const ACT_ACCENT: Record<SimAct, string> = {
+  1: "var(--season-spring)",
+  2: "var(--season-summer)",
+  3: "var(--season-autumn)",
+  4: "var(--season-winter)",
+};
+
+function AnimatedCounter({ to, from = 0 }: { to: number; from?: number }) {
+  const [value, setValue] = useState(from);
+  const reducedMotion = usePrefersReducedMotion();
+  useEffect(() => {
+    if (reducedMotion || to === from) { setValue(to); return; }
+    const duration = 1500;
+    const start = performance.now();
+    let rafId: number;
+    function tick() {
+      const elapsed = performance.now() - start;
+      const progress = Math.min(elapsed / duration, 1);
+      const eased = 1 - Math.pow(1 - progress, 3);
+      setValue(Math.round(from + eased * (to - from)));
+      if (progress < 1) rafId = requestAnimationFrame(tick);
+    }
+    rafId = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(rafId);
+  }, [to, from, reducedMotion]);
+  return <>{value}</>;
 }
 
-function displayMatchSummary(value: string | undefined, commutePref?: UserProfile["commutePref"]) {
-  if (!value) return null;
-  return value.replace(/^~(\d+)\s+min\s+from\b/i, `~$1 min ${commuteModePhrase(commutePref)} from`);
+type MatchChipTone = "good" | "warn" | "caution" | "info" | "neutral";
+
+function splitMatchReason(value: string | undefined) {
+  return value
+    ? value
+        .split("·")
+        .map((item) => item.trim())
+        .filter(Boolean)
+    : [];
+}
+
+function compactMatchChipLabel(value: string, commutePref?: UserProfile["commutePref"]) {
+  const commute = value.match(/~?(\d+)\s+min/i);
+  if (commute) return `~${commute[1]} min ${commuteModePhrase(commutePref)}`;
+
+  const rent = value.match(/\$[\d,]+\/mo/i);
+  if (rent) {
+    if (/over budget/i.test(value)) return `${rent[0]} over`;
+    if (/fits your budget/i.test(value)) return `${rent[0]} fit`;
+    return rent[0];
+  }
+
+  return value.charAt(0).toUpperCase() + value.slice(1);
+}
+
+function matchChipTone(value: string): MatchChipTone {
+  const lower = value.toLowerCase();
+  const commute = lower.match(/~?(\d+)\s+min/);
+  if (commute) {
+    const minutes = Number(commute[1]);
+    if (minutes >= 35) return "warn";
+    if (minutes >= 25) return "neutral";
+    return "good";
+  }
+  if (/over budget|higher crime/.test(lower)) return "caution";
+  if (/budget|rent|\$|low crime|fast city services/.test(lower)) return "good";
+  if (/transit|dining|nightlife/.test(lower)) return "info";
+  return "neutral";
+}
+
+function matchChipClassName(tone: MatchChipTone, active: boolean) {
+  if (active) return "border-white/24 bg-white/14 text-white";
+  if (tone === "good") return "border-emerald-200 bg-emerald-50 text-emerald-800";
+  if (tone === "warn") return "border-amber-200 bg-amber-50 text-amber-800";
+  if (tone === "caution") return "border-red-200 bg-red-50 text-red-700";
+  if (tone === "info") return "border-sky-200 bg-sky-50 text-sky-800";
+  return "border-stone-200 bg-stone-50 text-stone-700";
+}
+
+function matchChips(match: CommunityAreaMapMatch, commutePref?: UserProfile["commutePref"]) {
+  const labels = match.descriptors?.length ? match.descriptors : splitMatchReason(match.matchReason);
+  return labels.slice(0, 3).map((label) => ({
+    label: compactMatchChipLabel(label, commutePref),
+    tone: matchChipTone(label),
+  }));
 }
 
 function MessageBubble({ message, compact = false }: { message: SimMessage; compact?: boolean }) {
@@ -157,69 +249,19 @@ function toolEvidence(tool: string) {
   };
 }
 
-function displayWorkplaceContext(workplace?: string) {
-  const trimmed = workplace?.trim();
-  if (!trimmed || trimmed.toLowerCase() === "not specified") return null;
-  const withoutChicago = trimmed.replace(/,\s*Chicago(?:,\s*(?:IL|Illinois))?$/i, "");
-  return withoutChicago.replace(/^The University of Chicago$/i, "University of Chicago");
-}
-
-function AuthGateCard({
-  reason,
-  onDismiss,
-}: {
-  reason: AuthPromptReason;
-  onDismiss: () => void;
-}) {
-  const title = reason === "year" ? "Save your profile to run the year" : "Save your profile to ask Sam";
-  const body =
-    reason === "year"
-      ? "The full month-by-month simulation uses protected AI calls and keeps your profile available after sign-in."
-      : "Sam uses protected grounded tools for personalized answers, maps, and session history.";
-
-  return (
-    <div className="rounded-[var(--radius-md)] border border-[rgba(101,151,184,0.36)] bg-[rgba(101,151,184,0.12)] p-4">
-      <div className="flex items-start gap-3">
-        <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white/80 text-[color:var(--lake-strong)]">
-          <LockKeyhole size={16} />
-        </span>
-        <div className="min-w-0 flex-1">
-          <p className="text-sm font-extrabold text-[color:var(--foreground)]">{title}</p>
-          <p className="mt-1 text-xs font-semibold leading-5 text-[color:var(--muted)]">{body}</p>
-          <div className="mt-3 flex flex-wrap gap-2">
-            <SignInButton mode="modal">
-              <button type="button" className="atlas-button-secondary">
-                Sign in
-              </button>
-            </SignInButton>
-            <SignUpButton mode="modal">
-              <button type="button" className="atlas-button-primary">
-                Create account
-              </button>
-            </SignUpButton>
-            <button
-              type="button"
-              onClick={onDismiss}
-              className="rounded-[var(--radius-md)] px-3 text-xs font-extrabold text-[color:var(--muted)] hover:text-[color:var(--foreground)]"
-            >
-              Keep previewing
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
 interface SimClientProps {
   demoMode?: boolean;
+  autorun?: boolean;
 }
 
-export function SimClient({ demoMode = false }: Readonly<SimClientProps>) {
+export function SimClient({ demoMode = false, autorun = false }: Readonly<SimClientProps>) {
   const { isLoaded: authLoaded, isSignedIn } = useUser();
   const isDemoMode = demoMode;
+  // Whether the cinematic street pano found imagery — false keeps the gradient fallback.
+  const [cinematicPanoOk, setCinematicPanoOk] = useState(true);
 
   // Top-level UI state — shared across all three domains
   const [step, setStep] = useState<Step>("profile");
@@ -227,7 +269,10 @@ export function SimClient({ demoMode = false }: Readonly<SimClientProps>) {
   const [sceneMode, setSceneMode] = useState<SceneMode>("street");
   const [mobilePanel, setMobilePanel] = useState<MobilePanel>("map");
   const [sessionId, setSessionId] = useState<string | null>(null);
-  const currentMonthButtonRef = useRef<HTMLButtonElement | null>(null);
+  // Idle presentation: season-ticket interstitial (run is the default path)
+  // or the debrief/Q&A two-panel screen (explicit opt-out or post-run).
+  const [idleView, setIdleView] = useState<IdleView>("interstitial");
+  const autorunFiredRef = useRef(false);
 
   const profileData = useSimProfile({ demoMode, setStep });
 
@@ -244,27 +289,21 @@ export function SimClient({ demoMode = false }: Readonly<SimClientProps>) {
     setMobilePanel,
   });
 
-  const runData = useSimRun({
+  const runData = useSimAct({
     profile: profileData.profile,
     neighborhood: profileData.neighborhood,
-    month,
-    setMonth,
-    step,
-    setMessages: chat.setMessages,
     setActiveMapActions: chat.setActiveMapActions,
-    activeMapActions: chat.activeMapActions,
     isDemoMode,
     isSignedIn,
     authLoaded,
     setMobilePanel,
     setAuthPrompt: chat.setAuthPrompt,
-    setSceneMode,
   });
 
+  // Retry pano imagery lookup whenever the simulated neighborhood changes.
   useEffect(() => {
-    if (step !== "sim") return;
-    currentMonthButtonRef.current?.scrollIntoView({ block: "nearest", inline: "center" });
-  }, [month, step]);
+    setCinematicPanoOk(true);
+  }, [profileData.neighborhood]);
 
   // Demo init — touches state from all hooks, so lives here
   useEffect(() => {
@@ -281,6 +320,19 @@ export function SimClient({ demoMode = false }: Readonly<SimClientProps>) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isDemoMode]);
 
+  // Demo autorun (/sim?demo=1&autorun=1): the landing CTA promises an
+  // auto-playing demo, so skip the interstitial and start the run as soon as
+  // the demo profile has committed. Separate effect from demo-init because
+  // setProfile hasn't applied within the same pass.
+  useEffect(() => {
+    if (!isDemoMode || !autorun || autorunFiredRef.current) return;
+    if (step === "sim" && profileData.profile && runData.runState === "idle") {
+      autorunFiredRef.current = true;
+      void runData.startAutoRun();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isDemoMode, autorun, step, profileData.profile, runData.runState]);
+
   // ── Neighborhood / month coordination ────────────────────────────────────────
 
   function pickNeighborhood(name: string) {
@@ -290,6 +342,8 @@ export function SimClient({ demoMode = false }: Readonly<SimClientProps>) {
     setSceneMode("street");
     setStep("sim");
     setMobilePanel("map");
+    runData.stopAutoRun();
+    setIdleView("interstitial");
     if (profileData.profile) void chat.fetchOpening(name, month, profileData.profile, { reset: true });
   }
 
@@ -308,9 +362,39 @@ export function SimClient({ demoMode = false }: Readonly<SimClientProps>) {
     setSessionId(null);
     chat.setActiveMapActions([]);
     setSceneMode("street");
+    runData.stopAutoRun();
+    setIdleView("interstitial");
     if (profileData.profile) {
       void chat.fetchOpening(nextNeighborhood, month, profileData.profile, { reset: true });
     }
+  }
+
+  // Verdict → debrief: seed Sam's opener from the year the user just watched,
+  // then drop back to the two-panel screen with run history intact.
+  function handleVerdictDebrief() {
+    const spring = runData.actDataSummaries[1];
+    const winter = runData.actDataSummaries[4];
+    const callouts: string[] = [];
+    if (spring?.commuteMinutes != null && winter?.commuteMinutes != null && winter.commuteMinutes > spring.commuteMinutes) {
+      callouts.push(`your commute stretched from ${spring.commuteMinutes} to ${winter.commuteMinutes} minutes by winter`);
+    } else if (spring?.commuteMinutes != null) {
+      callouts.push(`your commute held near ${spring.commuteMinutes} minutes all year`);
+    }
+    if (spring?.avgRent != null) {
+      callouts.push(`rent estimates ran about $${spring.avgRent.toLocaleString()}/mo`);
+    }
+    const opener = `Your year in ${profileData.neighborhood} is complete${
+      callouts.length ? ` — ${callouts.join(", and ")}` : ""
+    }. Ask me anything about how it went.`;
+    chat.setMessages((prev) => [...prev, createSimMessage("assistant", opener, month, "opener")]);
+    runData.exitToDebrief();
+    setIdleView("debrief");
+    setMobilePanel("advisor");
+  }
+
+  function handleVerdictTryAnother() {
+    runData.stopAutoRun();
+    setStep("neighborhood");
   }
 
   function renderSuggestedQuestionChips() {
@@ -358,39 +442,43 @@ export function SimClient({ demoMode = false }: Readonly<SimClientProps>) {
     ].filter((item): item is string => Boolean(item));
 
     return (
-      <main className="atlas-page atlas-page-neighborhood min-h-screen px-5 py-5 text-[color:var(--foreground)] sm:px-8 sm:py-7">
-        <div className="mx-auto flex min-h-[calc(100vh-2.5rem)] w-full max-w-[1760px] flex-col gap-6 sm:min-h-[calc(100vh-3.5rem)]">
+      <main className="atlas-page-neighborhood min-h-screen px-4 py-4 text-[color:var(--foreground)] sm:px-7 sm:py-6">
+        <div className="mx-auto flex min-h-[calc(100vh-2rem)] w-full max-w-[1760px] flex-col gap-4 sm:min-h-[calc(100vh-3rem)]">
           <header className="atlas-topbar">
             <a className="atlas-brand" href="/">
               <span className="atlas-brand-mark" />
-              CityLiving Sim
+              LivingThere
             </a>
             <div className="flex items-center gap-3">
               <button
                 onClick={() => setStep("profile")}
-                className="hidden text-xs font-bold tracking-[0.08em] text-[color:var(--foreground)] opacity-70 hover:opacity-100 sm:inline-flex"
+                className="hidden text-xs font-bold text-[color:var(--foreground)] opacity-70 hover:opacity-100 sm:inline-flex"
               >
-                Edit profile
+                Edit my life
               </button>
               <AuthActions />
             </div>
           </header>
 
-          <section className="grid min-h-0 flex-1 gap-6 lg:h-[calc(100vh-8.25rem)] lg:max-h-[calc(100vh-8.25rem)] lg:min-h-[640px] lg:overflow-hidden lg:grid-cols-[340px_minmax(0,1fr)] 2xl:grid-cols-[360px_minmax(0,1fr)]">
-            <aside className="atlas-card min-h-0 p-5 text-[color:var(--foreground)] lg:h-full lg:overflow-hidden">
+          <section className="atlas-surface px-4 py-3 sm:px-5">
+            <JourneyRail current="match" />
+          </section>
+
+          <section className="grid min-h-0 flex-1 gap-4 lg:h-[calc(100vh-10.5rem)] lg:max-h-[calc(100vh-10.5rem)] lg:min-h-[620px] lg:overflow-hidden lg:grid-cols-[380px_minmax(0,1fr)]">
+            <aside className="atlas-card min-h-0 overflow-hidden text-[color:var(--foreground)] lg:h-full">
               <div className="flex h-full min-h-0 flex-col gap-4">
-                <div>
-                  <p className="atlas-kicker text-[color:var(--muted)]">Neighborhood fit</p>
-                  <div className="mt-2 flex items-center gap-2">
-                    <ListChecks size={19} className="text-[color:var(--sage-strong)]" aria-hidden="true" />
-                    <h1 className="text-2xl font-extrabold tracking-normal">Top matches</h1>
+                <div className="border-b border-[color:var(--panel-border)] bg-[color:var(--cinema-ink)] p-5 text-white">
+                  <p className="film-caption text-white/44">Chapter two · The shortlist</p>
+                  <div className="mt-3 flex items-start gap-2">
+                    <ListChecks size={19} className="mt-1 text-[color:var(--season-summer)]" aria-hidden="true" />
+                    <h1 className="film-display text-3xl leading-none">Choose a year worth living.</h1>
                   </div>
-                  <p className="mt-2 line-clamp-2 text-sm font-semibold leading-5 text-[color:var(--muted)]">
+                  <p className="mt-3 line-clamp-2 text-sm font-medium leading-5 text-white/58">
                     {profileContext.length ? profileContext.join(" · ") : "Ranked against your profile."}
                   </p>
                 </div>
 
-                <div className="min-h-0 flex-1 overflow-y-auto pr-1">
+                <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-4">
                   {profileData.matchLoading && (
                     <div className="grid gap-2">
                       {[0, 1, 2, 3, 4].map((item) => (
@@ -426,30 +514,44 @@ export function SimClient({ demoMode = false }: Readonly<SimClientProps>) {
                     <div className="grid gap-2">
                       {mapMatches.slice(0, 5).map((match) => {
                         const active = activeMatch?.communityAreaNumber === match.communityAreaNumber;
-                        const rankColor = matchRankColor(match.rank);
-                        const matchSummary = displayMatchSummary(match.matchReason, profileData.profile?.commutePref);
+                        const chips = matchChips(match, profileData.profile?.commutePref);
                         return (
                           <button
                             key={match.communityAreaNumber}
                             type="button"
                             onClick={() => profileData.setNeighborhood(match.name)}
-                            style={active ? { borderColor: rankColor, backgroundColor: `${rankColor}14` } : undefined}
+                            style={active ? { borderColor: MATCH_RANK_SELECTED_STROKE, backgroundColor: MATCH_RANK_SELECTED_SURFACE } : undefined}
                             className={`grid grid-cols-[32px_minmax(0,1fr)] items-start gap-3 rounded-[var(--radius-md)] border p-3 text-left transition ${
                               active
-                                ? "border-[color:var(--panel-border)] shadow-sm"
-                                : "border-[color:var(--panel-border)] bg-white/64 hover:border-[color:var(--sage)] hover:bg-white/78"
+                                ? "text-white shadow-md"
+                                : "border-[color:var(--panel-border)] bg-white/72 hover:border-[#0F766E] hover:bg-[#F0FDFA]"
                             }`}
                           >
                             <span
-                              className="flex h-8 w-8 items-center justify-center rounded-full text-sm font-extrabold text-white shadow-sm"
-                              style={{ backgroundColor: rankColor }}
+                              className="flex h-8 w-8 items-center justify-center rounded-full border text-sm font-extrabold shadow-sm"
+                              style={{
+                                backgroundColor: MATCH_RANK_BADGE_SURFACE,
+                                borderColor: active ? "rgba(255,249,238,0.74)" : MATCH_RANK_BADGE_STROKE,
+                                color: active ? MATCH_RANK_SELECTED_SURFACE : MATCH_RANK_BADGE_TEXT,
+                              }}
                             >
                               {match.rank}
                             </span>
                             <span className="min-w-0">
-                              <span className="block truncate text-sm font-extrabold text-[color:var(--foreground)]">{match.name}</span>
-                              <span className="mt-0.5 block line-clamp-2 text-xs font-semibold leading-4 text-[color:var(--muted)]">
-                                {matchSummary || match.descriptors?.slice(0, 2).join(" · ") || "Matches your profile"}
+                              <span className={`block truncate text-sm font-extrabold ${active ? "text-white" : "text-[color:var(--foreground)]"}`}>{match.name}</span>
+                              <span className="mt-2 flex flex-wrap gap-1.5">
+                                {chips.length ? chips.map((chip) => (
+                                  <span
+                                    key={`${match.communityAreaNumber}-${chip.label}`}
+                                    className={`rounded-full border px-2 py-0.5 text-[11px] font-extrabold leading-4 ${matchChipClassName(chip.tone, active)}`}
+                                  >
+                                    {chip.label}
+                                  </span>
+                                )) : (
+                                  <span className={`rounded-full border px-2 py-0.5 text-[11px] font-extrabold leading-4 ${matchChipClassName("neutral", active)}`}>
+                                    Matches your profile
+                                  </span>
+                                )}
                               </span>
                             </span>
                           </button>
@@ -496,16 +598,17 @@ export function SimClient({ demoMode = false }: Readonly<SimClientProps>) {
     activeMapActions, openingThinking, authPrompt, setAuthPrompt, messagesEndRef,
   } = chat;
   const {
-    runState, completedMonths, autoRunMonth, autoRunNarrative,
-    isSeasonTransitioning, timeProgress, dailySchedule, currentEvent, setCurrentEvent,
-    streetViewCoords, streetViewHeading, routeCoords, commuteRouteCoords,
+    runState, currentAct, actNarrative, actDataSummaries,
+    completedActs, streetViewUrls, monthDataSummary, savedRunId,
     startAutoRun, togglePause, stopAutoRun,
-    waitingForContinue, summaryNarrative, summaryMonth, continueMonth,
   } = runData;
 
   const monthName = MONTH_NAMES[month - 1] ?? "this month";
   const sceneCoords = NEIGHBORHOOD_COORDINATES.find((c) => c.name === neighborhood);
   const workplaceCoords = getProfileWorkplaceCoords(profile);
+  const showInterstitial = runState === "idle" && idleView === "interstitial";
+  const hasCompletedRun = completedActs.length === 4;
+  const currentSeasonAct = MONTH_TO_ACT[month] ?? null;
   const messageGroups = groupMessagesByMonth(messages);
   const currentGroupKey = monthGroupKey(month, SIM_YEAR);
   const currentGroup = messageGroups.find((group) => group.key === currentGroupKey);
@@ -513,7 +616,7 @@ export function SimClient({ demoMode = false }: Readonly<SimClientProps>) {
   const currentMessages = currentGroup?.messages ?? [];
 
   return (
-    <div className="relative h-screen overflow-hidden bg-[color:var(--sage-strong)] text-white">
+    <div className="relative h-screen overflow-hidden bg-[color:var(--cinema-ink)] text-white">
       <div aria-hidden="true" className="absolute inset-0">
         <Skybox
           month={month}
@@ -523,17 +626,18 @@ export function SimClient({ demoMode = false }: Readonly<SimClientProps>) {
           fullBleed
           showElements={false}
         />
-        <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(79,111,69,0.12)_0%,rgba(79,111,69,0.54)_56%,rgba(38,49,38,0.86)_100%)]" />
+        <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(17,19,21,0.18)_0%,rgba(17,19,21,0.5)_58%,rgba(17,19,21,0.92)_100%)]" />
       </div>
 
       <div className="relative z-10 flex h-full flex-col">
         {isDemoMode && (
-          <div className="flex items-center justify-between gap-2 bg-[color:var(--amber)] px-4 py-1.5 text-xs font-extrabold text-[color:var(--foreground)]">
-            <span>Demo mode - Hyde Park x October {SIM_YEAR}</span>
+          <div className="flex items-center justify-between gap-2 bg-[color:var(--cinema-paper)] px-4 py-1.5 text-xs font-extrabold text-[color:var(--foreground)]">
+            <span>Demo screening · Hyde Park · {SIM_YEAR}</span>
             <a href="/sim" className="underline opacity-70 hover:opacity-100">Exit demo</a>
           </div>
         )}
-        <header className="relative z-20 flex flex-col gap-3 overflow-visible border-b border-white/12 bg-[rgba(79,111,69,0.72)] px-3 py-2.5 shadow-lg backdrop-blur-xl md:flex-row md:items-center md:gap-4 md:px-4">
+        {!showInterstitial && runState === "idle" && (
+        <header className="relative z-20 flex flex-col gap-3 overflow-visible border-b border-white/12 bg-[rgba(17,19,21,0.82)] px-3 py-2.5 shadow-lg backdrop-blur-xl md:flex-row md:items-center md:gap-4 md:px-4">
           <div className="flex min-w-0 flex-1 flex-col gap-3 md:flex-row md:items-center md:gap-4">
             <div className="flex min-w-0 shrink-0 items-center gap-2">
               <Link
@@ -542,7 +646,7 @@ export function SimClient({ demoMode = false }: Readonly<SimClientProps>) {
                 className="inline-flex h-9 shrink-0 items-center justify-center gap-1.5 rounded-[var(--radius-sm)] border border-white/20 bg-white/12 px-2.5 text-xs font-extrabold text-white/85 shadow-sm backdrop-blur transition hover:bg-white/20 hover:text-white sm:px-3"
               >
                 <ArrowLeft size={16} aria-hidden="true" />
-                <span className="hidden sm:inline">Profile</span>
+                <span className="hidden sm:inline">My life</span>
               </Link>
               <select
                 aria-label="Neighborhood"
@@ -559,375 +663,515 @@ export function SimClient({ demoMode = false }: Readonly<SimClientProps>) {
               </select>
             </div>
 
-            <div className={`atlas-scrollbar -mb-2 flex w-full min-w-0 flex-1 gap-1 overflow-x-auto pb-2 md:w-auto ${runState !== "idle" ? "hidden" : ""}`}>
-              {MONTH_SHORT.map((name, i) => {
-                const m = i + 1;
-                const isCompleted = completedMonths.includes(m);
-                const isCurrent = month === m;
-                const isAutoRunning = autoRunMonth === m && runState === "running";
-                return (
-                  <button
-                    key={name}
-                    ref={isCurrent ? currentMonthButtonRef : undefined}
-                    onClick={() => changeMonth(m)}
-                    title={isCompleted ? `View ${name} recap` : undefined}
-                    className={`relative shrink-0 rounded-[var(--radius-sm)] px-2.5 py-1.5 text-xs font-bold transition-colors ${
-                      isCompleted
-                        ? "bg-[color:var(--park)] text-white"
-                        : isAutoRunning
-                          ? "bg-[color:var(--sage)] text-white"
-                          : isCurrent
-                            ? "bg-[color:var(--amber)] text-[color:var(--foreground)]"
-                            : "text-white/65 hover:bg-white/15 hover:text-white"
-                    }`}
-                  >
-                    {isCompleted ? `✓ ${name}` : name}
-                    {isCurrent && (
-                      <span
-                        aria-hidden="true"
-                        className="pointer-events-none absolute left-1/2 top-full h-2 w-px -translate-x-1/2 bg-[color:var(--amber)]"
-                      />
-                    )}
-                  </button>
-                );
-              })}
-            </div>
+            {runState === "idle" && (
+              <div className="flex w-full min-w-0 flex-1 flex-wrap items-center gap-1.5 md:w-auto">
+                {SEASON_ORDER.map((act) => {
+                  const isCurrent = currentSeasonAct === act;
+                  const label = ACT_SEASON[act].charAt(0).toUpperCase() + ACT_SEASON[act].slice(1);
+                  return (
+                    <button
+                      key={act}
+                      onClick={() => changeMonth(ACT_MONTH[act])}
+                      style={isCurrent ? { backgroundColor: ACT_ACCENT[act] } : undefined}
+                      className={`shrink-0 rounded-full px-3 py-1.5 text-xs font-bold transition-colors ${
+                        isCurrent
+                          ? "text-white shadow-sm"
+                          : "text-white/65 hover:bg-white/15 hover:text-white"
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
           </div>
 
           <div className="hidden shrink-0 items-center justify-between gap-3 md:flex">
+            {runState === "idle" && (
+              <button
+                type="button"
+                onClick={() => void startAutoRun()}
+                className="inline-flex h-9 items-center gap-1.5 rounded-[var(--radius-sm)] bg-[color:var(--cinema-ivory)] px-3 text-xs font-extrabold text-[color:var(--cinema-ink)] shadow-sm transition hover:bg-white"
+              >
+                <Play size={13} fill="currentColor" />
+                {hasCompletedRun ? "Replay the year" : "Live the year"}
+              </button>
+            )}
             <AuthActions className="border-white/20 bg-white/15" />
           </div>
         </header>
+        )}
 
-        {/* Full-screen auto-run layout — Street View immersion */}
-        {runState !== "idle" && sceneCoords && (() => {
-          const sceneMonth = autoRunMonth ?? month;
-          const streetHour = Math.round(7 + timeProgress * 16); // 7 AM → 11 PM arc
-          return (
-            <div data-testid="sim-avatar-scene" className="relative min-h-0 flex-1 overflow-hidden bg-black">
-              {/* Layer 1: Mapillary street imagery — primary full-screen visual */}
-              <div className="absolute inset-0">
-                <MapillaryStreetView
-                  lat={(streetViewCoords ?? sceneCoords).lat}
-                  lng={(streetViewCoords ?? sceneCoords).lng}
-                  month={sceneMonth}
-                  hourOfDay={streetHour}
-                  targetHeading={streetViewHeading}
-                  neighborhoodName={neighborhood}
-                  enableDrift
-                />
-              </div>
-              {/* Month in Review — appears between months, user must dismiss */}
-              {waitingForContinue && (() => {
-                const SEASONS_MAP: Record<number, string> = { 1: "Winter", 4: "Spring", 7: "Summer", 10: "Fall" };
-                const nextSeasonMonths: Record<number, number> = { 1: 4, 4: 7, 7: 10 };
-                const nextM = summaryMonth !== null ? nextSeasonMonths[summaryMonth] : null;
-                const nextLabel = nextM != null ? SEASONS_MAP[nextM] : null;
-                const btnLabel = nextLabel ? `Continue to ${nextLabel} →` : "See Year Summary →";
-                return (
-                  <div
-                    className="absolute inset-0 z-[1200] flex items-center justify-center"
-                    style={{ background: "rgba(0,0,0,0.65)", backdropFilter: "blur(6px)" }}
-                  >
-                    <div
-                      className="mx-6 w-full max-w-xl rounded-2xl border border-white/10 p-8 shadow-2xl"
-                      style={{ background: "rgba(18,30,42,0.97)" }}
-                    >
-                      <div className="mb-2 text-xs font-semibold uppercase tracking-widest text-amber-400">
-                        Month in Review
-                      </div>
-                      <h2 className="mb-4 text-2xl font-bold text-white">
-                        {MONTH_NAMES[(summaryMonth ?? 1) - 1]} · {neighborhood}
-                      </h2>
-                      <p className="mb-8 whitespace-pre-line text-sm leading-relaxed text-white/80">
-                        {summaryNarrative || "Month complete."}
-                      </p>
-                      <button
-                        onClick={continueMonth}
-                        className="w-full rounded-xl bg-amber-500 py-3 text-sm font-semibold text-black transition-colors hover:bg-amber-400"
-                      >
-                        {btnLabel}
-                      </button>
-                    </div>
-                  </div>
-                );
-              })()}
-              {/* Layer 3: CSS weather particles */}
-              <WeatherLayer month={sceneMonth} />
-              {/* Exit button */}
-              <div className="absolute right-4 top-4 z-[1100]">
-                <button
-                  onClick={stopAutoRun}
-                  className="rounded-[var(--radius-sm)] border border-white/20 bg-[rgba(19,33,43,0.82)] px-3 py-2 text-xs font-bold text-white/80 shadow backdrop-blur transition hover:bg-[color:var(--foreground)] hover:text-white"
+        {runState !== "idle" ? (
+          /* ── Cinematic 4-act mode ── */
+          <div className="relative min-h-0 flex-1 overflow-hidden">
+            {/* Layer 0 — seasonal gradient, always present so there is never a blank frame */}
+            {currentAct && (
+              <div
+                className="absolute inset-0"
+                style={{
+                  background: ({
+                    spring: "linear-gradient(160deg, #0d2b1a 0%, #1e5c35 50%, #0d2b1a 100%)",
+                    summer: "linear-gradient(160deg, #1a1a0a 0%, #5c4a10 50%, #1a1a0a 100%)",
+                    autumn: "linear-gradient(160deg, #1a0d00 0%, #6b3010 50%, #1a0d00 100%)",
+                    winter: "linear-gradient(160deg, #050d1a 0%, #102040 50%, #050d1a 100%)",
+                  } as Record<string, string>)[ACT_SEASON[currentAct]] ?? "linear-gradient(160deg, #111 0%, #222 100%)",
+                }}
+              />
+            )}
+
+            {/* Layer 1 — live drifting street panorama (mounted once, survives act changes) */}
+            {sceneCoords && cinematicPanoOk && (
+              <CinematicStreetPano
+                lat={sceneCoords.lat}
+                lng={sceneCoords.lng}
+                onImageryStatus={(ok) => setCinematicPanoOk(ok)}
+              />
+            )}
+
+            {/* Layer 2 — cached Google seasonal Street View takes priority when available */}
+            {currentAct && streetViewUrls[ACT_SEASON[currentAct]] && (
+              <img
+                key={streetViewUrls[ACT_SEASON[currentAct]]}
+                src={streetViewUrls[ACT_SEASON[currentAct]]}
+                className="absolute inset-0 h-full w-full object-cover"
+                style={{ animation: "sim-act-fade 1200ms ease" }}
+                alt=""
+              />
+            )}
+
+            {/* Layer 3 — act tint (season + time of day), crossfades between acts */}
+            <div
+              className="pointer-events-none absolute inset-0"
+              style={{
+                backgroundColor: currentAct ? ACT_TINT[currentAct] : "transparent",
+                transition: "background-color 2000ms ease",
+              }}
+            />
+
+            {/* Layer 4 — ambient weather (snow / leaves / petals / sun haze) */}
+            {currentAct && runState !== "done" && (
+              <SeasonalAtmosphere season={ACT_SEASON[currentAct]} />
+            )}
+
+            {/* Season label top-left */}
+            {currentAct && (
+              <div className="absolute left-4 top-4 z-[1200] sm:left-6 sm:top-6">
+                <span
+                  key={currentAct}
+                  className="inline-block border-l-2 bg-black/46 px-3 py-2 text-xs font-extrabold uppercase tracking-[0.12em] text-white backdrop-blur-sm"
+                  style={{ animation: "sim-act-fade 800ms ease", borderColor: ACT_ACCENT[currentAct] }}
                 >
-                  Exit
-                </button>
+                  {`${ACT_SEASON[currentAct].charAt(0).toUpperCase()}${ACT_SEASON[currentAct].slice(1)} · ${{ 1: "Morning", 2: "Midday", 3: "Afternoon", 4: "Night" }[currentAct]}`}
+                </span>
               </div>
-              {/* Narrative panel */}
-              <DailyLifePanel
-                monthName={MONTH_NAMES[sceneMonth - 1] ?? ""}
-                month={sceneMonth}
-                neighborhood={neighborhood}
-                narrative={autoRunNarrative || (runState === "running" ? "Looking around…" : runState === "done" ? "Year complete." : "")}
-                isPaused={runState === "paused"}
-                onPauseToggle={togglePause}
-                timeProgress={timeProgress}
-                currentEvent={currentEvent ?? undefined}
-              />
-              {/* Season transition card — floats over Street View, no black screen */}
-              <SeasonTransitionCard
-                month={autoRunMonth ?? month}
-                neighborhood={neighborhood}
-                visible={isSeasonTransitioning}
-              />
-            </div>
-          );
-        })()}
+            )}
 
-        <main className={`grid min-h-0 flex-1 pb-[72px] lg:grid-cols-[minmax(0,1fr)_420px] lg:grid-rows-1 lg:pb-0 ${runState !== "idle" ? "hidden" : ""}`}>
+            {/* Act progress dots top-center */}
+            <div className="absolute left-1/2 top-6 z-[1200] flex -translate-x-1/2 items-center gap-2 rounded-full bg-black/38 px-3 py-2 backdrop-blur-sm">
+              {([1, 2, 3, 4] as SimAct[]).map((act) => (
+                <span
+                  key={act}
+                  style={currentAct === act || completedActs.includes(act) ? { backgroundColor: ACT_ACCENT[act] } : undefined}
+                  className={`inline-block h-2 w-8 rounded-full transition-all ${
+                    completedActs.includes(act)
+                      ? ""
+                      : currentAct === act
+                        ? "animate-pulse"
+                        : "bg-white/30"
+                  }`}
+                />
+              ))}
+            </div>
+
+            {/* Back button top-right */}
+            <button
+              type="button"
+              onClick={stopAutoRun}
+              aria-label="Back to neighborhood"
+              className="absolute right-4 top-4 z-[1200] rounded-[var(--radius-sm)] border border-white/14 bg-black/46 px-3 py-2 text-xs font-bold text-white backdrop-blur-sm hover:bg-black/70 sm:right-6 sm:top-6"
+            >
+              End screening
+            </button>
+
+            {/* Narrative overlay — hidden when done */}
+            {runState !== "done" && (
+              <div
+                key={currentAct ?? "none"}
+                className="absolute left-4 top-1/2 z-[1100] max-h-[58vh] w-[min(440px,calc(100vw-2rem))] -translate-y-1/2 overflow-y-auto border-l-2 bg-black/58 p-5 text-white shadow-2xl backdrop-blur-md sm:left-6 sm:p-6"
+                style={{ animation: "sim-act-fade 800ms ease", borderColor: currentAct ? ACT_ACCENT[currentAct] : "white" }}
+              >
+                <p className="film-caption mb-4 text-white/42">
+                  Act {currentAct ?? "—"} · {neighborhood}
+                </p>
+                {actNarrative ? (
+                  <div className="space-y-3">
+                    {actNarrative.split(/\n\n+/).filter(Boolean).map((para, i) => (
+                      <p key={i} className="whitespace-pre-line text-sm leading-relaxed">{para.trim()}</p>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-sm text-white/60">
+                    Pulling {currentAct ? ACT_SEASON[currentAct] : "season"} data…
+                  </p>
+                )}
+              </div>
+            )}
+
+            {/* Verdict screen */}
+            {runState === "done" && profile && (
+              <SimVerdict
+                neighborhood={neighborhood}
+                profile={profile}
+                actDataSummaries={actDataSummaries}
+                onDebrief={handleVerdictDebrief}
+                onTryAnother={handleVerdictTryAnother}
+                isDemoMode={isDemoMode}
+                savedRunId={savedRunId}
+              />
+            )}
+
+            {/* Data card bottom-left */}
+            {monthDataSummary && currentAct && (
+              <div className="absolute bottom-5 left-4 z-[1200] hidden rounded-[var(--radius-md)] border border-white/12 bg-black/62 px-4 py-3 text-xs text-white backdrop-blur-md sm:block sm:left-6">
+                <div className="mb-2 text-[10px] font-bold uppercase tracking-widest text-white/40">
+                  {ACT_SEASON[currentAct].charAt(0).toUpperCase()}{ACT_SEASON[currentAct].slice(1)} Snapshot
+                </div>
+                <div className="grid grid-cols-2 gap-x-5 gap-y-1.5">
+                  {monthDataSummary.commuteMinutes != null && (
+                    <div>
+                      <span className="text-white/50">Commute </span>
+                      <span className="font-semibold">
+                        <AnimatedCounter
+                          to={monthDataSummary.commuteMinutes}
+                          from={(currentAct > 1 ? actDataSummaries[(currentAct - 1) as SimAct]?.commuteMinutes : null) ?? 0}
+                        /> min
+                      </span>
+                      {(() => {
+                        const prev = currentAct > 1 ? actDataSummaries[(currentAct - 1) as SimAct]?.commuteMinutes : null;
+                        if (prev != null && monthDataSummary.commuteMinutes != null) {
+                          const delta = monthDataSummary.commuteMinutes - prev;
+                          if (Math.abs(delta) >= 2) return <span className={`ml-1 ${delta > 0 ? "text-red-400" : "text-green-400"}`}>{delta > 0 ? `+${delta}` : delta}</span>;
+                        }
+                        return null;
+                      })()}
+                    </div>
+                  )}
+                  {monthDataSummary.avgRent != null && (
+                    <div>
+                      <span className="text-white/50">Rent </span>
+                      <span className="font-semibold">${monthDataSummary.avgRent.toLocaleString()}/mo</span>
+                    </div>
+                  )}
+                  {monthDataSummary.crime != null && (
+                    <div>
+                      <span className="text-white/50">Crime </span>
+                      <span className="font-semibold">
+                        <AnimatedCounter
+                          to={monthDataSummary.crime}
+                          from={(currentAct > 1 ? actDataSummaries[(currentAct - 1) as SimAct]?.crime : null) ?? 0}
+                        /> incidents
+                      </span>
+                      {(() => {
+                        const prev = currentAct > 1 ? actDataSummaries[(currentAct - 1) as SimAct]?.crime : null;
+                        if (prev != null && monthDataSummary.crime != null) {
+                          const pct = Math.round(((monthDataSummary.crime - prev) / Math.max(prev, 1)) * 100);
+                          if (Math.abs(pct) >= 5) return <span className={`ml-1 ${pct > 0 ? "text-red-400" : "text-green-400"}`}>{pct > 0 ? `+${pct}%` : `${pct}%`}</span>;
+                        }
+                        return null;
+                      })()}
+                    </div>
+                  )}
+                  {monthDataSummary.requests311 != null && (
+                    <div>
+                      <span className="text-white/50">311 requests </span>
+                      <span className="font-semibold">
+                        <AnimatedCounter
+                          to={monthDataSummary.requests311}
+                          from={(currentAct > 1 ? actDataSummaries[(currentAct - 1) as SimAct]?.requests311 : null) ?? 0}
+                        />
+                      </span>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Minimap bottom-right — hidden on the verdict screen (currentAct is null) */}
+            {sceneCoords && currentAct && (
+            <div className="absolute bottom-4 right-4 z-[1200] h-[132px] w-[132px] overflow-hidden rounded-[var(--radius-md)] border border-white/24 shadow-xl sm:bottom-6 sm:right-6 sm:h-[190px] sm:w-[190px]">
+                <SimPlayerMap
+                  neighborhoodName={neighborhood}
+                  homeCoords={{ lat: sceneCoords.lat, lng: sceneCoords.lng }}
+                  workplaceCoords={workplaceCoords}
+                  workplaceName={profile?.workplace ?? "Workplace"}
+                  simMonth={ACT_MONTH[currentAct]}
+                  isRunning={runState === "running"}
+                  mapActions={activeMapActions}
+                  season={ACT_SEASON[currentAct]}
+                  monthDataSummary={monthDataSummary ?? undefined}
+                />
+            </div>
+            )}
+
+            {/* Pause/Resume bottom-center */}
+            {runState !== "done" && (
+              <button
+                type="button"
+                onClick={togglePause}
+                className="absolute bottom-4 left-1/2 z-[1200] -translate-x-1/2 rounded-[var(--radius-sm)] border border-white/14 bg-black/58 px-4 py-2 text-sm font-bold text-white backdrop-blur-sm hover:bg-black/70 sm:bottom-6"
+              >
+                {runState === "paused" ? "▶ Resume" : "⏸ Pause"}
+              </button>
+            )}
+          </div>
+        ) : showInterstitial ? (
+          /* ── Season ticket — the moment before the year begins ── */
+          <SeasonTicket
+            neighborhood={neighborhood}
+            profile={profile}
+            sceneCoords={sceneCoords ? { lat: sceneCoords.lat, lng: sceneCoords.lng } : null}
+            isDemoMode={isDemoMode}
+            authPrompt={authPrompt === "year" ? authPrompt : null}
+            onDismissAuthPrompt={() => setAuthPrompt(null)}
+            onBegin={() => void startAutoRun()}
+            onSkip={() => setIdleView("debrief")}
+            onBackToMatches={() => {
+              stopAutoRun();
+              setStep("neighborhood");
+            }}
+          />
+        ) : (
+        <main className="grid min-h-0 flex-1 pb-[72px] lg:grid-cols-[minmax(0,1fr)_420px] lg:grid-rows-1 lg:pb-0">
           <section className={`relative min-h-0 overflow-hidden bg-black/20 ${mobilePanel !== "map" ? "max-lg:hidden" : ""}`}>
             <div className="relative h-full w-full overflow-hidden bg-black/35 shadow-2xl">
               <div className="relative h-full min-h-[360px] w-full lg:min-h-0">
-                  {sceneMode === "map" && sceneCoords ? (
-                    <SimulationMap
-                      neighborhoodName={neighborhood}
-                      neighborhoodCoords={{ lat: sceneCoords.lat, lng: sceneCoords.lng }}
-                      workplaceCoords={workplaceCoords}
-                      workplaceName={profile?.workplace}
-                      mapActions={activeMapActions}
-                    />
-                  ) : sceneCoords && runState === "idle" ? (
-                    <MapillaryStreetView lat={sceneCoords.lat} lng={sceneCoords.lng} month={month} neighborhoodName={neighborhood} />
-                  ) : (
-                    <Skybox
-                      month={month}
-                      crimeSignal={0}
-                      serviceSignal={null}
-                      transitSignal={0}
-                      fullBleed
-                      showElements
-                    />
-                  )}
-                  {sceneMode === "street" && (
-                    <SeasonalStreetOverlay month={month} monthName={monthName} neighborhood={neighborhood} />
-                  )}
-                  <div className="pointer-events-none absolute inset-x-0 top-0 z-[1000] flex flex-wrap items-start justify-between gap-3 bg-gradient-to-b from-black/60 to-transparent px-4 py-3">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <p className="text-xs font-bold text-white/75">
-                        {sceneMode === "map" ? "Interactive map" : "Street view"}
-                      </p>
-                      <div className="pointer-events-auto flex rounded-[var(--radius-sm)] border border-white/20 bg-black/45 p-0.5 shadow-sm backdrop-blur">
-                        {(["street", "map"] as const).map((mode) => (
-                          <button
-                            key={mode}
-                            type="button"
-                            aria-pressed={sceneMode === mode}
-                            onClick={() => setSceneMode(mode)}
-                            className={`rounded-[var(--radius-sm)] px-2 py-1 text-xs font-bold transition-colors ${
-                              sceneMode === mode
-                                ? "bg-white text-[color:var(--foreground)]"
-                                : "text-white/75 hover:bg-white/15 hover:text-white"
-                            }`}
-                          >
-                            {mode === "street" ? "Street view" : "Map"}
-                          </button>
-                        ))}
-                      </div>
+                {sceneMode === "map" && sceneCoords ? (
+                  <SimulationMap
+                    neighborhoodName={neighborhood}
+                    neighborhoodCoords={{ lat: sceneCoords.lat, lng: sceneCoords.lng }}
+                    workplaceCoords={workplaceCoords}
+                    workplaceName={profile?.workplace}
+                    mapActions={activeMapActions}
+                  />
+                ) : sceneCoords ? (
+                  <MapillaryStreetView lat={sceneCoords.lat} lng={sceneCoords.lng} month={month} neighborhoodName={neighborhood} />
+                ) : (
+                  <Skybox
+                    month={month}
+                    crimeSignal={0}
+                    serviceSignal={null}
+                    transitSignal={0}
+                    fullBleed
+                    showElements
+                  />
+                )}
+                {sceneMode === "street" && (
+                  <SeasonalStreetOverlay month={month} monthName={monthName} neighborhood={neighborhood} />
+                )}
+                <div className="pointer-events-none absolute inset-x-0 top-0 z-[1000] flex flex-wrap items-start justify-between gap-3 bg-gradient-to-b from-black/60 to-transparent px-4 py-3">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <p className="text-xs font-bold text-white/75">
+                      {sceneMode === "map" ? "Interactive map" : sceneMode === "city3d" ? "3D city view" : "Street view"}
+                    </p>
+                    <div className="pointer-events-auto flex rounded-[var(--radius-sm)] border border-white/20 bg-black/45 p-0.5 shadow-sm backdrop-blur">
+                      {(["street", "map"] as const).map((mode) => (
+                        <button
+                          key={mode}
+                          type="button"
+                          aria-pressed={sceneMode === mode}
+                          onClick={() => setSceneMode(mode)}
+                          className={`rounded-[var(--radius-sm)] px-2 py-1 text-xs font-bold transition-colors ${
+                            sceneMode === mode
+                              ? "bg-white text-[color:var(--foreground)]"
+                              : "text-white/75 hover:bg-white/15 hover:text-white"
+                          }`}
+                        >
+                          {mode === "street" ? "Street" : "Map"}
+                        </button>
+                      ))}
                     </div>
-                    <p className="rounded-[var(--radius-sm)] bg-black/42 px-2 py-1 text-xs font-bold text-white">{monthName} {SIM_YEAR}</p>
                   </div>
-                  {sceneMode === "street" && (
-                    <div className="pointer-events-none absolute inset-x-0 bottom-0 z-[900] bg-gradient-to-t from-black/80 via-black/40 to-transparent px-4 pb-8 pt-16">
-                      <p className="ml-14 text-2xl font-semibold leading-tight text-white">{neighborhood}</p>
-                    </div>
-                  )}
+                  <p className="rounded-[var(--radius-sm)] bg-black/42 px-2 py-1 text-xs font-bold text-white">{monthName} {SIM_YEAR}</p>
+                </div>
+                {sceneMode === "street" && (
+                  <div className="pointer-events-none absolute inset-x-0 bottom-0 z-[900] bg-gradient-to-t from-black/80 via-black/40 to-transparent px-4 pb-8 pt-16">
+                    <p className="ml-14 text-2xl font-semibold leading-tight text-white">{neighborhood}</p>
+                  </div>
+                )}
               </div>
             </div>
           </section>
 
           <section className={`flex min-h-0 flex-col border-t border-white/10 bg-[color:var(--panel-solid)] text-[color:var(--foreground)] shadow-2xl backdrop-blur-md lg:border-l lg:border-t-0 lg:border-white/10 ${mobilePanel !== "advisor" ? "max-lg:hidden" : ""}`}>
-            <div className="border-b border-[color:var(--panel-border)] px-5 py-4">
-              <p className="text-xs font-bold text-[color:var(--muted)]">Your simulation · {neighborhood}</p>
-              <p className="mt-1 text-sm font-extrabold text-[color:var(--foreground)]">{monthName} {SIM_YEAR}</p>
-            </div>
+            <>
+                <div className="border-b border-[color:var(--panel-border)] px-5 py-4">
+                  <p className="film-caption text-[color:var(--muted)]">
+                    {hasCompletedRun ? "After the film · Investigate the year" : "Neighborhood investigation"}
+                  </p>
+                  <h2 className="film-display mt-1 text-2xl leading-tight text-[color:var(--foreground)]">
+                    Ask Sam about {neighborhood}
+                  </h2>
+                  <p className="mt-1 text-xs font-bold text-[color:var(--muted)]">
+                    {currentSeasonAct
+                      ? `${ACT_SEASON[currentSeasonAct].charAt(0).toUpperCase()}${ACT_SEASON[currentSeasonAct].slice(1)} · ${monthName} ${SIM_YEAR}`
+                      : `${monthName} ${SIM_YEAR}`}
+                  </p>
+                </div>
 
-            {authPrompt && (
-              <div className="border-b border-[color:var(--panel-border)] px-5 py-4">
-                <AuthGateCard reason={authPrompt} onDismiss={() => setAuthPrompt(null)} />
-              </div>
-            )}
+                {authPrompt && (
+                  <div className="border-b border-[color:var(--panel-border)] px-5 py-4">
+                    <AuthGateCard reason={authPrompt} onDismiss={() => setAuthPrompt(null)} />
+                  </div>
+                )}
 
-            <div className="atlas-scrollbar min-h-0 flex-1 overflow-y-auto px-5 py-6">
-              <div className="mx-auto flex max-w-2xl flex-col gap-5 lg:max-w-none">
-                {earlierGroups.length > 0 && (
-                  <details className="rounded-[var(--radius-lg)] border border-[color:var(--panel-border)] bg-white/45 px-4 py-3 text-sm text-[color:var(--muted)]">
-                    <summary className="cursor-pointer select-none text-xs font-bold text-[color:var(--muted)]">
-                      Earlier months
-                    </summary>
-                    <div className="mt-4 space-y-5">
-                      {earlierGroups.map((group) => (
-                        <div key={group.key} className="space-y-2 border-t border-[color:var(--panel-border)] pt-4 first:border-t-0 first:pt-0">
-                          <p className="text-xs font-bold text-[color:var(--muted)]">
-                            {MONTH_NAMES[group.month - 1]} {group.year}
-                          </p>
-                          <div className="space-y-2 opacity-80">
-                            {group.messages.map((msg, i) => (
-                              <MessageBubble key={`${group.key}-${msg.kind}-${i}`} message={msg} compact />
-                            ))}
-                          </div>
+                <div className="atlas-scrollbar min-h-0 flex-1 overflow-y-auto px-5 py-6">
+                  <div className="mx-auto flex max-w-2xl flex-col gap-5 lg:max-w-none">
+                    {earlierGroups.length > 0 && (
+                      <details className="rounded-[var(--radius-lg)] border border-[color:var(--panel-border)] bg-white/45 px-4 py-3 text-sm text-[color:var(--muted)]">
+                        <summary className="cursor-pointer select-none text-xs font-bold text-[color:var(--muted)]">
+                          Earlier months
+                        </summary>
+                        <div className="mt-4 space-y-5">
+                          {earlierGroups.map((group) => (
+                            <div key={group.key} className="space-y-2 border-t border-[color:var(--panel-border)] pt-4 first:border-t-0 first:pt-0">
+                              <p className="text-xs font-bold text-[color:var(--muted)]">
+                                {MONTH_NAMES[group.month - 1]} {group.year}
+                              </p>
+                              <div className="space-y-2 opacity-80">
+                                {group.messages.map((msg, i) => (
+                                  <MessageBubble key={`${group.key}-${msg.kind}-${i}`} message={msg} compact />
+                                ))}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </details>
+                    )}
+
+                    <section className="space-y-4">
+                      <p className="film-caption text-[color:var(--muted)]">Current chapter</p>
+
+                      {currentMessages.length === 0 && !loading && !openingThinking && (
+                        <div className="space-y-3 rounded-[var(--radius-lg)] border border-[color:var(--panel-border)] bg-white/58 px-4 py-4">
+                          <p className="text-sm font-semibold text-[color:var(--muted)]">Sam will open this month here.</p>
+                        </div>
+                      )}
+
+                      {currentMessages.map((msg, i) => (
+                        <div key={`${currentGroupKey}-${msg.kind}-${i}`} className="space-y-3">
+                          <MessageBubble message={msg} />
                         </div>
                       ))}
-                    </div>
-                  </details>
-                )}
+                    </section>
 
-                <section className="space-y-4">
-                  <p className="text-xs font-bold text-[color:var(--muted)]">Current month</p>
+                    <section className="space-y-3 border-t border-[color:var(--panel-border)] pt-5">
+                      <p className="film-caption text-[color:var(--muted)]">Investigate this chapter</p>
+                      {renderSuggestedQuestionChips()}
+                    </section>
 
-                  {currentMessages.length === 0 && !loading && !openingThinking && (
-                    <div className="space-y-3 rounded-[var(--radius-lg)] border border-[color:var(--panel-border)] bg-white/58 px-4 py-4">
-                      <p className="text-sm font-semibold text-[color:var(--muted)]">Sam will open this month here.</p>
-                    </div>
-                  )}
+                    {openingThinking && (
+                      <div className="flex justify-start">
+                        <div className="rounded-[var(--radius-lg)] rounded-tl-[var(--radius-sm)] border border-[color:var(--panel-border)] bg-white/72 px-4 py-3 text-sm text-[color:var(--muted)] shadow-sm">
+                          Sam is thinking...
+                        </div>
+                      </div>
+                    )}
 
-                  {currentMessages.map((msg, i) => (
-                    <div key={`${currentGroupKey}-${msg.kind}-${i}`} className="space-y-3">
-                      <MessageBubble message={msg} />
-                    </div>
-                  ))}
-                </section>
+                    {loading && (
+                      <div className="flex justify-start">
+                        <div className="rounded-[var(--radius-lg)] rounded-tl-[var(--radius-sm)] border border-[color:var(--panel-border)] bg-white/72 px-4 py-3 text-sm text-[color:var(--muted)] shadow-sm">
+                          Sam is thinking...
+                        </div>
+                      </div>
+                    )}
 
-                {runState === "idle" && (
-                  <section>
+                    {error && (
+                      <div className="flex justify-start">
+                        <div className="rounded-[var(--radius-lg)] border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">
+                          {error}
+                        </div>
+                      </div>
+                    )}
+
+                    {lastToolsUsed.length > 0 && !loading && (
+                      <details className="rounded-[var(--radius-md)] border border-[color:var(--panel-border)] bg-white/58 px-4 py-3">
+                        <summary className="flex cursor-pointer list-none items-center gap-2 text-xs font-extrabold text-[color:var(--muted-strong)]">
+                          <Sparkles size={14} /> Civic evidence behind this answer
+                        </summary>
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          {lastToolsUsed.map((tool) => {
+                            const evidence = toolEvidence(tool);
+                            return (
+                              <span
+                                key={tool}
+                                title={evidence.detail}
+                                className="rounded-[var(--radius-sm)] border border-[rgba(101,151,184,0.3)] bg-[rgba(101,151,184,0.12)] px-2.5 py-1.5 text-xs font-bold text-[color:var(--lake-strong)]"
+                              >
+                                {evidence.label}
+                              </span>
+                            );
+                          })}
+                        </div>
+                        <div className="mt-3 grid gap-2">
+                          {lastToolsUsed.map((tool) => {
+                            const evidence = toolEvidence(tool);
+                            return (
+                              <p key={`${tool}-detail`} className="text-xs font-semibold leading-5 text-[color:var(--muted)]">
+                                <span className="font-extrabold text-[color:var(--foreground)]">{evidence.label}:</span> {evidence.detail}
+                              </p>
+                            );
+                          })}
+                        </div>
+                      </details>
+                    )}
+
+                    <div ref={messagesEndRef} />
+                  </div>
+                </div>
+
+                <footer className="border-t border-[color:var(--panel-border)] bg-[rgba(255,250,242,0.94)] px-5 py-4">
+                  <form
+                    onSubmit={(e) => { e.preventDefault(); void chat.send(input); }}
+                    className="mx-auto flex max-w-2xl gap-2 lg:max-w-none"
+                  >
+                    <input
+                      type="text"
+                      value={input}
+                      onChange={(e) => setInput(e.target.value)}
+                      placeholder={`Investigate ${neighborhood} in ${monthName}...`}
+                      disabled={loading}
+                      className="atlas-input flex-1 px-4 py-2.5 text-sm disabled:opacity-50"
+                    />
                     <button
-                      type="button"
-                      onClick={startAutoRun}
-                      className="group grid w-full grid-cols-[32px_minmax(0,1fr)_auto] items-center gap-3 rounded-[var(--radius-md)] border border-[color:var(--panel-border)] bg-white/58 px-4 py-3 text-left shadow-sm transition hover:border-[color:var(--sage)] hover:bg-white/78"
+                      type="submit"
+                      disabled={!input.trim() || loading}
+                      className="inline-flex items-center gap-2 rounded-[var(--radius-md)] bg-[color:var(--accent)] px-4 py-2.5 text-sm font-extrabold text-white transition hover:bg-[color:var(--accent-strong)] disabled:opacity-40"
                     >
-                      <span className="flex h-8 w-8 items-center justify-center rounded-full bg-[rgba(111,141,95,0.14)] text-[color:var(--sage-strong)]">
-                        <Play size={16} aria-hidden="true" />
-                      </span>
-                      <span className="min-w-0">
-                        <span className="block text-sm font-extrabold text-[color:var(--foreground)]">
-                          Run a year in {neighborhood}
-                        </span>
-                        <span className="mt-1 block text-xs font-semibold leading-5 text-[color:var(--muted)]">
-                          4 seasons · Jan → Apr → Jul → Oct · ~2 min
-                        </span>
-                      </span>
-                      <span className="rounded-[var(--radius-sm)] border border-[rgba(111,141,95,0.32)] px-2.5 py-1.5 text-xs font-extrabold text-[color:var(--sage-strong)] transition group-hover:bg-[color:var(--sage)] group-hover:text-white">
-                        Start →
-                      </span>
+                      <Send size={15} /> <span className="hidden sm:inline">Send</span>
                     </button>
-                  </section>
-                )}
-
-                <section className="space-y-3 border-t border-[color:var(--panel-border)] pt-5">
-                  <p className="text-xs font-bold text-[color:var(--muted)]">Suggested questions</p>
-                  {renderSuggestedQuestionChips()}
-                </section>
-
-                {openingThinking && (
-                  <div className="flex justify-start">
-                    <div className="rounded-[var(--radius-lg)] rounded-tl-[var(--radius-sm)] border border-[color:var(--panel-border)] bg-white/72 px-4 py-3 text-sm text-[color:var(--muted)] shadow-sm">
-                      Sam is thinking...
-                    </div>
-                  </div>
-                )}
-
-                {loading && (
-                  <div className="flex justify-start">
-                    <div className="rounded-[var(--radius-lg)] rounded-tl-[var(--radius-sm)] border border-[color:var(--panel-border)] bg-white/72 px-4 py-3 text-sm text-[color:var(--muted)] shadow-sm">
-                      Sam is thinking...
-                    </div>
-                  </div>
-                )}
-
-                {error && (
-                  <div className="flex justify-start">
-                    <div className="rounded-[var(--radius-lg)] border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">
-                      {error}
-                    </div>
-                  </div>
-                )}
-
-                {lastToolsUsed.length > 0 && !loading && (
-                  <details className="rounded-[var(--radius-md)] border border-[color:var(--panel-border)] bg-white/58 px-4 py-3">
-                    <summary className="flex cursor-pointer list-none items-center gap-2 text-xs font-extrabold text-[color:var(--muted-strong)]">
-                      <Sparkles size={14} /> Evidence used
-                    </summary>
-                    <div className="mt-3 flex flex-wrap gap-2">
-                      {lastToolsUsed.map((tool) => {
-                        const evidence = toolEvidence(tool);
-                        return (
-                          <span
-                            key={tool}
-                            title={evidence.detail}
-                            className="rounded-[var(--radius-sm)] border border-[rgba(101,151,184,0.3)] bg-[rgba(101,151,184,0.12)] px-2.5 py-1.5 text-xs font-bold text-[color:var(--lake-strong)]"
-                          >
-                            {evidence.label}
-                          </span>
-                        );
-                      })}
-                    </div>
-                    <div className="mt-3 grid gap-2">
-                      {lastToolsUsed.map((tool) => {
-                        const evidence = toolEvidence(tool);
-                        return (
-                          <p key={`${tool}-detail`} className="text-xs font-semibold leading-5 text-[color:var(--muted)]">
-                            <span className="font-extrabold text-[color:var(--foreground)]">{evidence.label}:</span> {evidence.detail}
-                          </p>
-                        );
-                      })}
-                    </div>
-                  </details>
-                )}
-
-                <div ref={messagesEndRef} />
-              </div>
-            </div>
-
-            <footer className="border-t border-[color:var(--panel-border)] bg-[rgba(255,250,242,0.94)] px-5 py-4">
-              <form
-                onSubmit={(e) => { e.preventDefault(); void chat.send(input); }}
-                className="mx-auto flex max-w-2xl gap-2 lg:max-w-none"
-              >
-                <input
-                  type="text"
-                  value={input}
-                  onChange={(e) => setInput(e.target.value)}
-                  placeholder={`Ask about ${neighborhood} in ${monthName}...`}
-                  disabled={loading}
-                  className="atlas-input flex-1 px-4 py-2.5 text-sm disabled:opacity-50"
-                />
-                <button
-                  type="submit"
-                  disabled={!input.trim() || loading}
-                  className="inline-flex items-center gap-2 rounded-[var(--radius-md)] bg-[color:var(--accent)] px-4 py-2.5 text-sm font-extrabold text-white transition hover:bg-[color:var(--accent-strong)] disabled:opacity-40"
-                >
-                  <Send size={15} /> <span className="hidden sm:inline">Ask</span>
-                </button>
-              </form>
-            </footer>
+                  </form>
+                </footer>
+            </>
           </section>
 
-          <section className={`min-h-0 overflow-y-auto bg-[color:var(--panel-solid)] px-5 py-5 text-[color:var(--foreground)] lg:hidden ${mobilePanel !== "timeline" ? "hidden" : ""}`}>
+          <section className={`min-h-0 overflow-y-auto bg-[color:var(--panel-solid)] px-5 py-5 text-[color:var(--foreground)] lg:hidden ${mobilePanel !== "seasons" ? "hidden" : ""}`}>
             <div className="mx-auto grid max-w-2xl gap-4">
               <div>
-                <p className="atlas-kicker text-[color:var(--muted)]">Timeline</p>
+                <p className="atlas-kicker text-[color:var(--muted)]">Seasons</p>
                 <h2 className="mt-2 text-2xl font-extrabold">{neighborhood} in {SIM_YEAR}</h2>
               </div>
               <div className="grid gap-2">
-                {MONTH_SHORT.map((name, i) => {
-                  const m = i + 1;
-                  const isCompleted = completedMonths.includes(m);
-                  const isCurrent = month === m;
+                {SEASON_ORDER.map((act) => {
+                  const isCurrent = currentSeasonAct === act;
+                  const label = ACT_SEASON[act].charAt(0).toUpperCase() + ACT_SEASON[act].slice(1);
                   return (
                     <button
-                      key={`mobile-${name}`}
+                      key={`mobile-season-${act}`}
                       type="button"
                       onClick={() => {
-                        changeMonth(m);
+                        changeMonth(ACT_MONTH[act]);
                         setMobilePanel("advisor");
                       }}
                       className={`flex items-center justify-between rounded-[var(--radius-md)] border px-4 py-3 text-left text-sm font-bold ${
@@ -936,8 +1180,8 @@ export function SimClient({ demoMode = false }: Readonly<SimClientProps>) {
                           : "border-[color:var(--panel-border)] bg-white/70 text-[color:var(--muted-strong)]"
                       }`}
                     >
-                      <span>{name} {SIM_YEAR}</span>
-                      <span className="text-xs text-[color:var(--muted)]">{isCompleted ? "complete" : isCurrent ? "current" : "preview"}</span>
+                      <span>{label} · {MONTH_NAMES[ACT_MONTH[act] - 1]} {SIM_YEAR}</span>
+                      <span className="text-xs text-[color:var(--muted)]">{isCurrent ? "current" : "ask about it"}</span>
                     </button>
                   );
                 })}
@@ -945,13 +1189,14 @@ export function SimClient({ demoMode = false }: Readonly<SimClientProps>) {
             </div>
           </section>
         </main>
+        )}
 
-        {runState === "idle" && (
+        {runState === "idle" && !showInterstitial && (
           <nav className="fixed inset-x-0 bottom-0 z-[1300] grid grid-cols-3 border-t border-[color:var(--panel-border)] bg-[rgba(255,249,238,0.96)] px-3 py-2 text-[color:var(--foreground)] shadow-[0_-14px_34px_rgba(38,49,38,0.16)] backdrop-blur lg:hidden">
             {[
               { id: "map" as const, label: "Map", Icon: MapIcon },
               { id: "advisor" as const, label: "Advisor", Icon: MessageCircle },
-              { id: "timeline" as const, label: "Timeline", Icon: CalendarDays },
+              { id: "seasons" as const, label: "Seasons", Icon: CalendarDays },
             ].map(({ id, label, Icon }) => (
               <button
                 key={id}

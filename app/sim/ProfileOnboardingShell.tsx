@@ -4,6 +4,7 @@ import { useCallback, useState } from "react";
 import dynamic from "next/dynamic";
 import { Bike, CarFront, Footprints, MapPin, TrainFront } from "lucide-react";
 import { AuthActions } from "@/components/AuthActions";
+import { JourneyRail } from "@/components/JourneyRail";
 import type { UserProfile } from "@/lib/tools/types";
 import {
   OnboardingProfileForm,
@@ -88,90 +89,76 @@ export function ProfileOnboardingShell({ onComplete, submitLabel }: ProfileOnboa
     setDraft(nextDraft);
   }, []);
   const ModeIcon = MODE_ICON[draft.commutePref];
-  const compactHero = draft.hasInteracted || draft.activeStep > 0;
   const anchorLabel = draft.workplace.trim() || "Not set";
 
   return (
-    <main className="atlas-page min-h-screen px-5 py-4 text-[color:var(--foreground)] sm:px-8 sm:py-5">
-      <div className="mx-auto flex w-full max-w-[1120px] flex-col gap-4">
-        <header className="atlas-topbar">
-          <a className="atlas-brand" href="/">
+    <main className="atlas-page-neighborhood min-h-screen px-4 py-4 text-[color:var(--foreground)] sm:px-7 sm:py-6">
+      <div className="mx-auto flex w-full max-w-[1320px] flex-col gap-5">
+        <header className="atlas-topbar !bg-[rgba(251,248,242,0.9)]">
+          <a className="atlas-brand !text-[color:var(--foreground)] ![text-shadow:none]" href="/">
             <span className="atlas-brand-mark" />
-            CityLiving Sim
+            LivingThere
           </a>
           <AuthActions />
         </header>
 
-        {compactHero ? (
-          <section className="relative overflow-hidden rounded-[var(--radius-lg)] border border-white/18 bg-[linear-gradient(135deg,rgba(79,111,69,0.94),rgba(101,151,184,0.64),rgba(247,240,227,0.2))] p-2 text-white shadow-[var(--shadow-lg)]">
-            <div className="grid gap-3 lg:grid-cols-[minmax(0,0.82fr)_minmax(340px,0.9fr)] lg:items-stretch">
-              <div className="flex min-w-0 flex-col justify-center gap-3 px-1 py-1">
-                <p className="text-sm font-semibold text-white/76">Living profile</p>
-                <div className="flex min-w-0 flex-wrap items-center gap-2">
-                  <span className="rounded-[var(--radius-sm)] border border-white/18 bg-white/12 px-3 py-2 text-sm font-semibold text-white/92">
-                    ${draft.budget.toLocaleString()}
-                  </span>
-                  <span className="flex min-w-0 max-w-full items-center gap-1.5 rounded-[var(--radius-sm)] border border-white/18 bg-white/12 px-3 py-2 text-sm font-semibold text-white/92 sm:max-w-[360px]">
+        <section className="atlas-surface px-4 py-3 sm:px-5">
+          <JourneyRail current="profile" />
+        </section>
+
+        <section className="grid items-start gap-5 lg:grid-cols-[340px_minmax(0,1fr)]">
+          <aside className="overflow-hidden rounded-[var(--radius-lg)] bg-[color:var(--cinema-ink)] text-white shadow-[var(--shadow-lg)] lg:sticky lg:top-6">
+            <div className="p-5 sm:p-6">
+              <p className="film-caption text-white/48">Chapter one · Your life</p>
+              <h1 className="film-display mt-3 text-4xl leading-[0.98] sm:text-5xl">
+                Give the city your point of view.
+              </h1>
+              <p className="mt-4 text-sm font-medium leading-6 text-white/62">
+                {STEP_COPY[draft.stepId]}
+              </p>
+
+              <dl className="mt-6 grid gap-px overflow-hidden rounded-[var(--radius-md)] bg-white/12">
+                <div className="flex items-center justify-between gap-3 bg-white/6 px-3 py-3">
+                  <dt className="text-xs font-bold text-white/48">Monthly budget</dt>
+                  <dd className="text-sm font-extrabold">${draft.budget.toLocaleString()}</dd>
+                </div>
+                <div className="flex items-center justify-between gap-3 bg-white/6 px-3 py-3">
+                  <dt className="text-xs font-bold text-white/48">Daily anchor</dt>
+                  <dd className="flex min-w-0 items-center gap-1.5 text-sm font-extrabold">
                     <MapPin size={14} className="shrink-0" aria-hidden="true" />
                     <span className="truncate">{anchorLabel}</span>
-                  </span>
-                  <span className="flex items-center gap-1.5 rounded-[var(--radius-sm)] border border-white/18 bg-white/12 px-3 py-2 text-sm font-semibold capitalize text-white/92">
+                  </dd>
+                </div>
+                <div className="flex items-center justify-between gap-3 bg-white/6 px-3 py-3">
+                  <dt className="text-xs font-bold text-white/48">How you move</dt>
+                  <dd className="flex items-center gap-1.5 text-sm font-extrabold capitalize">
                     <ModeIcon size={14} aria-hidden="true" />
                     {draft.commutePref}
-                  </span>
+                  </dd>
                 </div>
-              </div>
-
-              <div className="h-[160px] overflow-hidden rounded-[var(--radius-md)] border border-white/20 bg-white/12 shadow-[0_18px_44px_rgba(38,49,38,0.2)] sm:h-[180px] lg:h-[200px]">
-                <ProfileOnboardingPreviewMap draft={draft} variant="compact" />
-              </div>
+              </dl>
             </div>
-          </section>
-        ) : (
-          <section className="relative overflow-hidden rounded-[var(--radius-lg)] border border-white/18 bg-[linear-gradient(135deg,rgba(79,111,69,0.94),rgba(101,151,184,0.64),rgba(247,240,227,0.22))] p-2 text-white shadow-[var(--shadow-lg)] sm:p-3">
-            <div className="grid gap-3 lg:h-[176px] lg:grid-cols-[minmax(0,0.82fr)_minmax(360px,1.18fr)] lg:items-stretch">
-              <div className="flex min-w-0 flex-col justify-between gap-2 px-1 py-1 sm:px-2">
-                <div>
-                  <p className="text-sm font-semibold text-white/72">Living profile</p>
-                  <h1 className="mt-1.5 max-w-3xl text-3xl font-medium leading-[1.05] tracking-normal sm:text-[2rem]">
-                    Tune the map to your daily life.
-                  </h1>
-                  <p className="mt-1.5 max-w-2xl text-sm font-normal leading-5 text-white/80">
-                    {STEP_COPY[draft.stepId]}
-                  </p>
-                </div>
 
-                <div className="grid gap-2 text-sm font-semibold text-white/90 sm:grid-cols-3">
-                  <div className="rounded-[var(--radius-md)] border border-white/18 bg-white/12 px-3 py-1.5 backdrop-blur">
-                    <span className="block text-white/64">Budget</span>
-                    <span className="mt-1 block text-base text-white">${draft.budget.toLocaleString()}</span>
-                  </div>
-                  <div className="rounded-[var(--radius-md)] border border-white/18 bg-white/12 px-3 py-1.5 backdrop-blur">
-                    <span className="block text-white/64">Workplace</span>
-                    <span className="mt-1 flex min-w-0 items-center gap-1.5 text-base text-white">
-                      <MapPin size={15} className="shrink-0" aria-hidden="true" />
-                      <span className="truncate">{anchorLabel}</span>
-                    </span>
-                  </div>
-                  <div className="rounded-[var(--radius-md)] border border-white/18 bg-white/12 px-3 py-1.5 backdrop-blur">
-                    <span className="block text-white/64">Commute</span>
-                    <span className="mt-1 flex items-center gap-1.5 text-base capitalize text-white">
-                      <ModeIcon size={16} aria-hidden="true" />
-                      {draft.commutePref}
-                    </span>
-                  </div>
-                </div>
-              </div>
-
-              <div className="h-[150px] overflow-hidden rounded-[var(--radius-md)] border border-white/20 bg-white/12 shadow-[0_18px_44px_rgba(38,49,38,0.2)] lg:h-full">
-                <ProfileOnboardingPreviewMap draft={draft} variant="expanded" />
-              </div>
+            <div className="h-[210px] border-t border-white/12 bg-white/8 sm:h-[260px] lg:h-[330px]">
+              <ProfileOnboardingPreviewMap draft={draft} variant={draft.hasInteracted ? "compact" : "expanded"} />
             </div>
-          </section>
-        )}
+            <div className="season-strip rounded-none" aria-hidden="true">
+              <span /><span /><span /><span />
+            </div>
+          </aside>
 
-        <section className="atlas-surface p-4 sm:p-5">
-          <OnboardingProfileForm onComplete={onComplete} submitLabel={submitLabel} onDraftChange={handleDraftChange} />
+          <section className="atlas-surface p-4 sm:p-6">
+            <div className="mb-5 border-b border-[color:var(--panel-border)] pb-5">
+              <p className="film-caption text-[color:var(--muted)]">Living profile · Step {draft.activeStep + 1} of 4</p>
+              <h2 className="film-display mt-2 text-3xl text-[color:var(--foreground)] sm:text-4xl">
+                {draft.stepId === "basics" && "Start with the shape of an ordinary day."}
+                {draft.stepId === "priorities" && "Decide what should win when tradeoffs appear."}
+                {draft.stepId === "requests" && "Add the details a dataset cannot guess."}
+                {draft.stepId === "review" && "This is the life we will take into Chicago."}
+              </h2>
+            </div>
+            <OnboardingProfileForm onComplete={onComplete} submitLabel={submitLabel} onDraftChange={handleDraftChange} />
+          </section>
         </section>
       </div>
     </main>

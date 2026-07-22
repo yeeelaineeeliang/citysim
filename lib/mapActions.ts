@@ -1,6 +1,6 @@
 import { hasSupabaseCredentials, createSupabaseAdminClient } from '@/lib/supabase'
 import { getCoordinateByName } from '@/lib/neighborhoodCoordinates'
-import { findCachedTransitCorridor } from '@/lib/ctaGtfs'
+import { findCachedTransitCorridor, getStopsNear } from '@/lib/ctaGtfs'
 import { fetchOSRMRoute, commuteMode } from '@/lib/fetchRoute'
 import { queryLocalEntertainmentPlaces } from '@/lib/localPlaces'
 import type {
@@ -203,11 +203,24 @@ export async function buildMapActions(
   const center = { lat: coord.lat, lng: coord.lng }
 
   const entertainment = findResult(items, 'query_entertainment', isEntertainmentResult)
+  const commute = findResult(items, 'query_commute', isCommuteResult)
+  const transit = findResult(items, 'query_transit', isTransitResult)
+  const crime = findResult(items, 'query_crime', isCrimeResult)
+
+  const destination = commute && validPoint(req.profile.workplaceLat, req.profile.workplaceLng)
+    ? { lat: req.profile.workplaceLat as number, lng: req.profile.workplaceLng as number }
+    : null
+
+  // Kick off every network/DB-dependent lookup concurrently instead of one at a time.
+  const [placesResult, osrmRoute, crimeContext] = await Promise.all([
+    entertainment ? queryLocalEntertainmentPlaces({ neighborhood: req.neighborhood, limit: 90 }) : Promise.resolve(null),
+    commute && destination && commute.mode !== 'transit'
+      ? fetchOSRMRoute(center, destination, commuteMode(commute.mode))
+      : Promise.resolve(null),
+    crime ? (deps.getCrimeAreaContext ?? loadCrimeAreaContext)(req.neighborhood, req.month, year) : Promise.resolve(null),
+  ])
+
   if (entertainment) {
-    const placesResult = await queryLocalEntertainmentPlaces({
-      neighborhood: req.neighborhood,
-      limit: 90,
-    })
     actions.push({
       type: 'entertainment_summary',
       id: `entertainment-${req.neighborhood}-${year}-${req.month}`,
@@ -217,20 +230,11 @@ export async function buildMapActions(
       bars: entertainment.bars,
       parks: entertainment.parks,
       farmersMarkets: entertainment.farmers_markets,
-      ...(placesResult.places.length ? { places: placesResult.places } : {}),
+      ...(placesResult?.places.length ? { places: placesResult.places } : {}),
     })
   }
 
-  const commute = findResult(items, 'query_commute', isCommuteResult)
-  const transit = findResult(items, 'query_transit', isTransitResult)
-  if (
-    commute &&
-    validPoint(req.profile.workplaceLat, req.profile.workplaceLng)
-  ) {
-    const destination = {
-      lat: req.profile.workplaceLat as number,
-      lng: req.profile.workplaceLng as number,
-    }
+  if (commute && destination) {
     const routeLabel = routeLabelFromTransit(transit)
     const timing = commute.estimated_minutes ? `~${commute.estimated_minutes} min` : 'Coarse commute'
     const distance = commute.distance_miles !== null ? `${commute.distance_miles.toFixed(1)} mi` : null
@@ -241,9 +245,6 @@ export async function buildMapActions(
           routeLabel,
           stopNames: transit?.stops ?? [],
         })
-      : null
-    const osrmRoute = commute.mode !== 'transit'
-      ? await fetchOSRMRoute(center, destination, commuteMode(commute.mode))
       : null
     const geometry = transitCorridor?.geometry ?? osrmRoute?.coords ?? undefined
     const source = transitCorridor
@@ -277,10 +278,8 @@ export async function buildMapActions(
     })
   }
 
-  const crime = findResult(items, 'query_crime', isCrimeResult)
   if (crime) {
-    const context = await (deps.getCrimeAreaContext ?? loadCrimeAreaContext)(req.neighborhood, req.month, year)
-    const level = crimeLevel(crime.total, context?.cityAverage ?? null)
+    const level = crimeLevel(crime.total, crimeContext?.cityAverage ?? null)
     actions.push({
       type: 'crime_area_signal',
       id: `crime-${req.neighborhood}-${year}-${req.month}`,
@@ -288,10 +287,23 @@ export async function buildMapActions(
       neighborhood: req.neighborhood,
       center,
       total: crime.total,
-      cityAverage: context?.cityAverage ?? null,
-      boundaryGeojson: context?.boundaryGeojson,
+      cityAverage: crimeContext?.cityAverage ?? null,
+      boundaryGeojson: crimeContext?.boundaryGeojson,
+      ...(crime.by_type ? { byType: crime.by_type } : {}),
       ...level,
     })
+  }
+
+  if (transit) {
+    const stops = getStopsNear(center, 1.2)
+    if (stops.length > 0) {
+      actions.push({
+        type: 'transit_stops',
+        id: `transit-${req.neighborhood}-${year}-${req.month}`,
+        neighborhood: req.neighborhood,
+        stops,
+      })
+    }
   }
 
   return actions

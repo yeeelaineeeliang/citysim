@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getStreetViewImageForCommunityArea } from "@/lib/streetView";
+import { getStreetViewImageForSeason } from "@/lib/streetView";
 import { NEIGHBORHOOD_COORDINATES } from "@/lib/neighborhoodCoordinates";
 import {
   jsonError,
@@ -8,12 +8,15 @@ import {
   requireApiUser,
   validateNeighborhoodQuery,
 } from "@/lib/apiSecurity";
+import type { ActSeason } from "@/app/sim/types";
+
+const VALID_SEASONS: ActSeason[] = ["spring", "summer", "autumn", "winter"];
 
 export async function GET(req: NextRequest) {
   const authResult = await requireApiUser();
   if (!authResult.ok) return authResult.response;
 
-  const rateLimited = rateLimitRequest(req, authResult.userId, RATE_LIMITS.lookup);
+  const rateLimited = await rateLimitRequest(req, authResult.userId, RATE_LIMITS.lookup);
   if (rateLimited) return rateLimited;
 
   const validated = validateNeighborhoodQuery(req.nextUrl.searchParams.get("neighborhood"));
@@ -28,7 +31,12 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ imageUrl: null });
   }
 
-  const result = await getStreetViewImageForCommunityArea(entry.slug);
+  const rawSeason = req.nextUrl.searchParams.get("season") ?? "spring";
+  const season: ActSeason = (VALID_SEASONS as string[]).includes(rawSeason)
+    ? (rawSeason as ActSeason)
+    : "spring";
+
+  const result = await getStreetViewImageForSeason(entry.slug, season);
   return NextResponse.json(
     { imageUrl: result?.imageUrl ?? null, lat: result?.latitude ?? null, lng: result?.longitude ?? null },
     {

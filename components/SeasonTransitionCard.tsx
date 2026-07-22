@@ -78,7 +78,7 @@ export function SeasonTransitionCard({ month, neighborhood, visible }: SeasonTra
           opacity: visible ? 1 : 0,
           transition: visible
             ? 'transform 0.35s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.3s ease'
-            : 'transform 0.3s cubic-bezier(0.55, 0, 0.45, 1), opacity 0.25s ease',
+            : 'transform 0.3s cubic-bezier(0.55, 0, 0.45, 1), opacity 0.5s ease',
           textAlign: 'center',
         }}
       >

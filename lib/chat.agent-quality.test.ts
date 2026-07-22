@@ -66,6 +66,11 @@ function assertNoInventedRail(response: string) {
   assert.doesNotMatch(response, /\d{1,3}(,\d{3})+\s+(riders|rides)\s+per\s+month/i)
 }
 
+// Sam is a resident persona — technical data-report phrases must never surface (lib/chat.ts PERSONA RULE)
+function assertStaysInPersona(response: string) {
+  assert.doesNotMatch(response, /coarse estimate|not a CTA itinerary|does not return|no stop list|tool-returned|according to the (data|tool)/i)
+}
+
 test('answers Oakland affordability with budget gap and stock caveat', async () => {
   const result = await runChat(request({ message: 'Can I afford to live here?' }))
 
@@ -82,9 +87,8 @@ test('answers Oakland to UChicago commute without inventing L-route certainty', 
 
   assert.match(result.toolsUsed.join(','), /query_commute/)
   assert.match(result.toolsUsed.join(','), /query_transit/)
-  assert.match(result.response, /coarse transit estimate|not a CTA itinerary/i)
   assert.match(result.response, /about \d+ minutes/i)
-  assert.match(result.response, /does not return an L stop list|not a route plan/i)
+  assert.match(result.response, /verify the exact stop|route planner/i)
   assert.match(result.response, /exact starting block/i)
   const action = result.mapActions?.find((item) => item.type === 'commute_route')
   assert.ok(action)
@@ -93,6 +97,7 @@ test('answers Oakland to UChicago commute without inventing L-route certainty', 
     assert.equal(action.destinationName, 'The University of Chicago')
   }
   assertNoInventedRail(result.response)
+  assertStaysInPersona(result.response)
 })
 
 test('handles sparse housing records without pretending affordability is proven', async () => {
@@ -111,9 +116,10 @@ test('handles transit access with no L stop list as a limitation', async () => {
   const result = await runChat(request({ message: 'How is transit in Oakland?' }))
 
   assert.match(result.toolsUsed.join(','), /query_transit/)
-  assert.match(result.response, /does not return an L stop list/i)
-  assert.match(result.response, /access signal, not a route plan/i)
+  assert.match(result.response, /verify the exact stop|route planner/i)
+  assert.match(result.response, /signal/i)
   assertNoInventedRail(result.response)
+  assertStaysInPersona(result.response)
 })
 
 test('returns an entertainment map action for weekend questions', async () => {

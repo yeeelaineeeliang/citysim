@@ -302,7 +302,7 @@ export default function PrototypePage() {
       <section className={`screen ${screen === 1 ? "is-active" : ""}`} aria-hidden={screen !== 1}>
         <div className="screen-inner onboarding">
           <header className="topbar">
-            <span>CITYLIVING SIM</span>
+            <span>LIVINGTHERE</span>
             <span>Step 1 of 2</span>
           </header>
 

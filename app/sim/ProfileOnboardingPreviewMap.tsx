@@ -15,6 +15,14 @@ import {
   getFallbackCommunityAreas,
   type CommunityAreaMapArea,
 } from "@/lib/communityAreaMap";
+import {
+  MATCH_RANK_BADGE_STROKE,
+  MATCH_RANK_BADGE_SURFACE,
+  MATCH_RANK_BADGE_TEXT,
+  matchRankColor,
+  matchRankFillOpacity,
+  matchRankStrokeColor,
+} from "@/lib/matchRankColors";
 import type { OnboardingProfileDraft } from "./OnboardingProfileForm";
 
 interface RankedMatch {
@@ -37,14 +45,12 @@ const CHICAGO_WORKPLACE_CENTER: [number, number] = [41.85, -87.65];
 const CHICAGO_INITIAL_ZOOM = 10;
 
 const COLORS = {
-  cream: "#fff9ee",
-  sage: "#6f8d5f",
-  sageSoft: "#dfe8d4",
-  sageStrong: "#4f6f45",
-  lake: "#6597b8",
-  terracotta: "#c76545",
-  dimFill: "#d7d5cc",
-  dimStroke: "#8f9187",
+  cream: "#fbf8f2",
+  sageSoft: "#dce9e4",
+  sageStrong: "#476f63",
+  terracotta: "#b95f3f",
+  dimFill: "#dad8d3",
+  dimStroke: "#8b9090",
 };
 
 function validAreas(data: unknown): CommunityAreaMapArea[] | null {
@@ -117,10 +123,11 @@ function workplaceBounds(coords: { lat: number; lng: number }, commutePref: Onbo
 }
 
 function rankColor(rank?: number) {
-  if (rank === 1) return COLORS.terracotta;
-  if (rank === 2) return COLORS.lake;
-  if (rank === 3) return COLORS.sage;
-  return COLORS.sageStrong;
+  return rank ? matchRankColor(rank) : COLORS.sageStrong;
+}
+
+function rankStrokeColor(rank?: number) {
+  return rank ? matchRankStrokeColor(rank) : COLORS.sageStrong;
 }
 
 function areaStyle(rank?: number, dimmed = false, review = false) {
@@ -135,24 +142,23 @@ function areaStyle(rank?: number, dimmed = false, review = false) {
   }
 
   return {
-    color: rank ? rankColor(rank) : "rgba(79,95,72,0.64)",
-    fillColor: rank ? COLORS.sageSoft : "#ecf0e4",
-    fillOpacity: rank ? (review ? 0.82 : 0.68) : 0.3,
+    color: rank ? rankStrokeColor(rank) : "rgba(79,95,72,0.64)",
+    fillColor: rank ? rankColor(rank) : "#ecf0e4",
+    fillOpacity: rank ? Math.min(matchRankFillOpacity(rank) + (review ? 0.18 : 0.06), 0.7) : 0.3,
     opacity: rank ? 0.98 : 0.58,
     weight: rank ? (review ? 2.2 : 1.5) : 0.8,
   };
 }
 
 function rankIcon(match: RankedMatch) {
-  const color = rankColor(match.rank);
   return L.divIcon({
     className: "",
     html: `<span style="
         display:flex;align-items:center;justify-content:center;
         width:28px;height:28px;border-radius:999px;
-        background:${color};border:2px solid ${COLORS.cream};
+        background:${MATCH_RANK_BADGE_SURFACE};border:2px solid ${MATCH_RANK_BADGE_STROKE};
         box-shadow:0 5px 12px rgba(38,49,38,0.22);
-        color:white;font:800 12px/1 'Avenir Next','Segoe UI Rounded',system-ui,sans-serif;
+        color:${MATCH_RANK_BADGE_TEXT};font:800 12px/1 'Avenir Next','Segoe UI Rounded',system-ui,sans-serif;
       ">${match.rank}</span>`,
     iconSize: [28, 28],
     iconAnchor: [14, 14],
@@ -351,9 +357,9 @@ export function ProfileOnboardingPreviewMap({ draft, variant }: ProfileOnboardin
                   center={areaCenter(area)}
                   radius={match ? 6 : 3}
                   pathOptions={{
-                    color: match ? rankColor(match.rank) : "rgba(79,95,72,0.42)",
-                    fillColor: match ? COLORS.sage : COLORS.sageSoft,
-                    fillOpacity: match ? 0.85 : 0.32,
+                    color: match ? rankStrokeColor(match.rank) : "rgba(79,95,72,0.42)",
+                    fillColor: match ? rankColor(match.rank) : COLORS.sageSoft,
+                    fillOpacity: match ? Math.min(matchRankFillOpacity(match.rank) + 0.2, 0.72) : 0.32,
                     weight: match ? 2 : 1,
                   }}
                 />

@@ -202,6 +202,7 @@ create table if not exists public.street_view_cache (
   id uuid primary key default gen_random_uuid(),
   city_id uuid not null references public.cities(id) on delete cascade,
   community_area_id uuid not null references public.community_areas(id) on delete cascade,
+  season text not null default 'spring' check (season in ('spring', 'summer', 'autumn', 'winter')),
   latitude double precision not null,
   longitude double precision not null,
   heading integer,
@@ -212,7 +213,7 @@ create table if not exists public.street_view_cache (
   metadata jsonb not null default '{}'::jsonb,
   fetched_at timestamptz not null default timezone('utc', now()),
   created_at timestamptz not null default timezone('utc', now()),
-  unique (city_id, community_area_id)
+  unique (city_id, community_area_id, season)
 );
 
 create table if not exists public.model_predictions (
@@ -280,8 +281,8 @@ create index if not exists entertainment_places_lookup_idx
 create index if not exists entertainment_places_neighborhood_idx
   on public.entertainment_places (neighborhood, category);
 
-create index if not exists street_view_cache_lookup_idx
-  on public.street_view_cache (city_id, community_area_id);
+create unique index if not exists street_view_cache_season_idx
+  on public.street_view_cache (city_id, community_area_id, season);
 
 create index if not exists model_predictions_lookup_idx
   on public.model_predictions (city_id, community_area_id, prediction_type, target_year, target_month);
@@ -452,3 +453,28 @@ cross join (
 ) as v(community_area_number, name, slug)
 where c.slug = 'chicago'
 on conflict (city_id, community_area_number) do nothing;
+
+-- Shared rate-limit store (see supabase/migrations/20260717000000_rate_limits.sql)
+create table if not exists public.rate_limits (
+  key text primary key,
+  count integer not null default 0,
+  reset_at timestamptz not null,
+  updated_at timestamptz not null default timezone('utc', now())
+);
+alter table public.rate_limits enable row level security;
+
+-- Saved cinematic runs (see supabase/migrations/20260718000000_create_sim_runs.sql)
+create table if not exists public.sim_runs (
+  id uuid primary key default gen_random_uuid(),
+  clerk_user_id text not null,
+  city_id uuid not null references public.cities(id) on delete restrict,
+  community_area_id uuid not null references public.community_areas(id) on delete restrict,
+  neighborhood text not null,
+  year integer not null default 2024,
+  profile_snapshot jsonb not null default '{}'::jsonb,
+  act_summaries jsonb not null default '{}'::jsonb,
+  verdict jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default timezone('utc', now())
+);
+create index if not exists sim_runs_user_created_idx on public.sim_runs (clerk_user_id, created_at desc);
+alter table public.sim_runs enable row level security;

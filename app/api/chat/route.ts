@@ -17,7 +17,7 @@ export async function POST(request: Request) {
     const authResult = await requireApiUser()
     if (!authResult.ok) return authResult.response
 
-    const rateLimited = rateLimitRequest(request, authResult.userId, RATE_LIMITS.ai)
+    const rateLimited = await rateLimitRequest(request, authResult.userId, RATE_LIMITS.ai)
     if (rateLimited) return rateLimited
 
     const tooLarge = rejectOversizedRequest(request)

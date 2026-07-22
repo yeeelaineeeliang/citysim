@@ -6,12 +6,17 @@ import type {
   ChatRequest,
   ChatResponse,
   CommuteResult,
+  CrimeResult,
+  DataSummary,
   HousingResult,
   MapAction,
+  ServiceResult,
   ToolResult,
   TransitResult,
   UserProfile,
 } from './tools/types'
+
+export type { DataSummary }
 
 export interface BriefRequest {
   neighborhood: string
@@ -19,6 +24,7 @@ export interface BriefRequest {
   year?: number
   profile: UserProfile
   prevMonthSummaries?: string[]
+  actContext?: 'spring' | 'summer' | 'autumn' | 'winter'
 }
 
 const MODEL = 'llama-3.3-70b-versatile'
@@ -68,15 +74,37 @@ Narrative output rules - transit and commute responses:
 - Never say the user would "rely on the L" unless tool-returned stop data and rail ridership support it.
 - Never claim "several L stops" or specific transfer choices unless the tool returned those stops or routes.
 - Convert monthly ridership into a usable signal: crowding level, daily scale, wait estimate, or stop access. Do not quote monthly ridership as the main answer.
-- If exact routing is unavailable, say that directly and give the best grounded orientation from query_commute and query_transit.
+- If exact routing is unavailable, convey what you know about the commute in resident terms — approximate time, what the neighborhood transit access is like — without breaking persona with technical qualifiers like "coarse estimate" or "not a CTA itinerary".
 - End with the practical next check: starting block, nearest stop, transfer burden, or direct bus/rail access.
 - Maximum 4 sentences. Prose only.
+`.trim()
+
+const SERVICE_311_NARRATIVE_RULES = `
+Narrative output rules - city services (311) responses:
+- Use these rules whenever the user asks about 311, city services, potholes, repairs, streetlights, graffiti, maintenance, or how responsive the city is.
+- Open with what waiting for city services actually feels like as a resident — not with raw request counts.
+- Translate avg_response_days into a human timeline: "about a week", "two to three weeks", never quote the raw decimal.
+- Anchor magnitude: faster or slower than the Chicago average is useful context when you can state it clearly.
+- Name the dominant request type only if it meaningfully shapes the user's day-to-day experience.
+- End with a practical implication: what the wait time means for planning, what to expect when something breaks.
+- Maximum 4 sentences. Prose only.
+`.trim()
+
+const ENTERTAINMENT_NARRATIVE_RULES = `
+Narrative output rules - entertainment, dining, and weekend activities responses:
+- Use these rules whenever the user asks about restaurants, bars, food, nightlife, parks, things to do, or weekend activities.
+- Never lead with raw venue counts. "161 restaurants" is not an answer — what you would actually do there is.
+- Characterize the scene: the density and feel of the food and bar options, not just how many exist.
+- If parks are named in the tool data, mention at least one by name with a seasonal note about what it is useful for this month.
+- Weave in the season: what October (or whatever month) specifically changes about how you'd spend a weekend here.
+- End with one concrete thing worth doing or checking out this month.
+- Maximum 5 sentences. Prose only.
 `.trim()
 
 // Step 1: routing prompt — model's job is tool selection only, no narration yet
 function buildRoutingPrompt(neighborhood: string, month: number): string {
   const monthName = MONTH_NAMES[month - 1] ?? 'this month'
-  return `You are the CityLiving Sim data routing agent. Call the most appropriate tool(s) to answer the user's question about ${neighborhood} in ${monthName}. For commute or route questions, call both query_commute and query_transit. Do not generate any response text — only call tools.`.trim()
+  return `You are the LivingThere data routing agent. Call the most appropriate tool(s) to answer the user's question about ${neighborhood} in ${monthName}. For commute or route questions, call both query_commute and query_transit. Do not generate any response text — only call tools.`.trim()
 }
 
 // Step 2: narration prompt — model has tool results in context, now narrates
@@ -98,20 +126,26 @@ User profile:
 - Lifestyle: ${lifestyleStr}
 ${profile.notes ? `- Context: ${profile.notes}` : ''}
 
+PERSONA RULE (highest priority): You are Sam, a real resident. Never break character with any of these phrases: "the data", "tool-returned", "the database", "coarse estimate", "not a CTA itinerary", "does not return", "no stop list", "sparse results", "this estimate", "the tool", "according to". Speak from lived experience, not from a data report.
+
 Rules:
 - Speak as a local who knows this neighborhood personally. Use "around here", "on my end of the neighborhood", or "honestly" once per response at most — just enough warmth to feel human, not so much it becomes a character bit.
 - Address the user in second person: "your commute", "your block", "you'd wait"
 - Translate numbers into experience: incidents per month → how safe the walk home feels, rides per day → how crowded the bus feels
 - Never lead with a raw number. Experience first, data as supporting detail
 - Answer from this specific user's perspective — not generically about the neighborhood
-- If a tool returned empty or sparse data, say so explicitly rather than filling in
+- If a tool returned empty or sparse data, convey what you experientially know — never surface system limitations as prose
 - For non-crime responses, use 3–5 sentences. Prose only. No bullet points.
 
 ${CRIME_NARRATIVE_RULES}
 
 ${HOUSING_NARRATIVE_RULES}
 
-${TRANSIT_COMMUTE_NARRATIVE_RULES}`.trim()
+${TRANSIT_COMMUTE_NARRATIVE_RULES}
+
+${SERVICE_311_NARRATIVE_RULES}
+
+${ENTERTAINMENT_NARRATIVE_RULES}`.trim()
 }
 
 // Check whether the narrative response references at least one value from the tool results
@@ -147,6 +181,10 @@ function isTransitResult(result: ToolResult): result is TransitResult {
 
 function isCommuteResult(result: ToolResult): result is CommuteResult {
   return 'estimated_minutes' in result && 'estimates' in result
+}
+
+function isServiceResult(r: ToolResult): r is ServiceResult {
+  return 'total_requests' in r && 'avg_response_days' in r
 }
 
 function describeBudgetFit(profile: UserProfile | undefined, rentEstimate: number): string {
@@ -261,21 +299,21 @@ function deterministicResponse(
   const commute = results.find(isCommuteResult)
   const transit = results.find(isTransitResult)
   if (commute || transit) {
+    const modeVerb = commute?.mode === 'driving' ? 'drive' : commute?.mode === 'biking' ? 'bike ride' : commute?.mode === 'walking' ? 'walk' : 'commute'
+
     const commuteSentence = commute && commute.estimated_minutes && commute.distance_miles !== null
-      ? `From ${neighborhood} to ${commute.destination}, treat this as a coarse ${commute.mode} estimate, not a CTA itinerary: about ${commute.estimated_minutes} minutes over ${commute.distance_miles.toFixed(1)} miles.`
-      : `For ${neighborhood}, the current tools do not have enough workplace-coordinate data to estimate a door-to-door commute.`
+      ? `Your ${modeVerb} from ${neighborhood} to ${commute.destination} runs about ${commute.estimated_minutes} minutes — roughly ${commute.distance_miles.toFixed(1)} miles.`
+      : `A door-to-door time to your workplace isn't in the loaded data for ${neighborhood}, but the neighborhood transit picture gives you a starting point.`
 
     const accessSentence = transit
       ? transit.stops.length > 0
-        ? `Neighborhood transit access centers on ${transit.stops.slice(0, 2).join(' and ')}, with ${crowdingPhrase(transit.crowding_level)}${transit.avg_peak_wait_minutes ? ` and about ${Math.round(transit.avg_peak_wait_minutes)} minutes between peak arrivals` : ''}.`
-        : `At the neighborhood level, transit reads as ${crowdingPhrase(transit.crowding_level)}; the data does not return an L stop list for ${neighborhood}, so use it as an access signal, not a route plan.`
-      : `Neighborhood transit access was not queried, so this answer cannot identify nearby stops or crowding.`
+        ? `${neighborhood} transit is ${crowdingPhrase(transit.crowding_level)}, centered on ${transit.stops.slice(0, 2).join(' and ')}${transit.avg_peak_wait_minutes ? ` — about ${Math.round(transit.avg_peak_wait_minutes)} min between peak arrivals` : ''}.`
+        : `Transit in ${neighborhood} runs ${crowdingPhrase(transit.crowding_level)} — useful as a signal for how crowded your bus or train will feel, though you'll want to verify the exact stop on a route planner.`
+      : ''
 
-    const forward = commute?.confidence === 'medium'
-      ? 'Before signing, check the exact starting block in CTA or Maps; the make-or-break detail is whether the apartment sits on a direct corridor or forces a transfer.'
-      : 'Before treating this as workable, check the exact starting block in a route planner so you can see stops, transfers, and first-mile walking time.'
+    const forward = 'Check the exact starting block in Maps before relying on this for lease decisions — which side of the neighborhood you land on can shift the real commute time.'
 
-    return `${commuteSentence} ${accessSentence} ${forward}`
+    return `${commuteSentence}${accessSentence ? ' ' + accessSentence : ''} ${forward}`.trim()
   }
 
   const r = results[0]
@@ -324,23 +362,49 @@ function deterministicResponse(
 
   // 311 result
   if ('total_requests' in r && 'avg_response_days' in r) {
-    const speed = (r.avg_response_days as number) <= 4
-      ? 'faster than the city average — issues on your block tend to get resolved within a few days'
-      : (r.avg_response_days as number) >= 6
-        ? 'slower than average — expect to wait a week or more for routine repairs'
-        : 'close to the city average of about five days'
-    return `In ${neighborhood} in ${monthName}, the city handled ${r.total_requests} service requests. Average response time was ${r.avg_response_days} days — ${speed}.`
+    const avgDays = r.avg_response_days as number
+    const roundedDays = Math.round(avgDays)
+    const weekPhrase = roundedDays <= 5
+      ? 'under a week'
+      : roundedDays <= 10
+        ? 'about one to two weeks'
+        : `close to ${Math.round(roundedDays / 7)} weeks`
+    const speedLabel = avgDays <= 4
+      ? 'on the faster end for Chicago — city crews tend to close requests here without much delay'
+      : avgDays >= 10
+        ? 'on the slow side for Chicago — longer than what most neighborhoods see'
+        : 'around the city average'
+    return `When something breaks on your block in ${neighborhood} this ${monthName} — a pothole, a busted streetlight, an overgrown parkway — expect the city to take ${weekPhrase} to respond, ${speedLabel}. The neighborhood logged ${r.total_requests as number} service requests this month. Factor that timeline into anything that directly affects your daily routine rather than assuming a quick turnaround.`
   }
 
   // Housing result
   if ('affordable_units' in r && 'avg_rent_estimate' in r) {
-    return `${neighborhood} has ${r.affordable_units} affordable rental units in the development database. The estimated average rent is around $${(r.avg_rent_estimate as number).toLocaleString()}/month — ${(r.avg_rent_estimate as number) <= 1200 ? 'well below the city median, which gives your budget real room to work with' : (r.avg_rent_estimate as number) >= 1800 ? 'on the higher end for Chicago, so your budget may limit options to smaller units' : 'in the mid-range for Chicago'}.`
+    const rent = r.avg_rent_estimate as number | null
+    if (rent === null || rent <= 0) {
+      return `${neighborhood} shows ${r.affordable_units} affordable rental units in the development database, but no rent estimate is loaded for this area — check live listings for actual market rent before treating affordability as settled.`
+    }
+    return `${neighborhood} has ${r.affordable_units} affordable rental units in the development database. The estimated average rent is around $${rent.toLocaleString()}/month — ${rent <= 1200 ? 'well below the city median, which gives your budget real room to work with' : rent >= 1800 ? 'on the higher end for Chicago, so your budget may limit options to smaller units' : 'in the mid-range for Chicago'}.`
   }
 
   // Entertainment result
   if ('restaurants' in r && 'bars' in r) {
-    const season = month >= 5 && month <= 9 ? 'peak season — outdoor dining and park use are at their best' : 'the slower season, but indoor spots are well-represented'
-    return `${neighborhood} has ${r.restaurants} restaurants and ${r.bars} bars within the community area${(r.parks as string[]).length > 0 ? `, with green space at ${(r.parks as string[])[0]}` : ''}. ${monthName} is ${season}.`
+    const restaurants = r.restaurants as number
+    const bars = r.bars as number
+    const parks = r.parks as string[]
+    const sceneStrength = restaurants > 100
+      ? `a solid food-and-bar scene — enough variety that you could eat somewhere new every week without repeating`
+      : restaurants > 40
+        ? `a workable dining scene for regular neighborhood meals, with enough variety to stay interesting`
+        : `a compact but functional food scene — a few reliable spots rather than overwhelming choice`
+    const parkNote = parks.length > 0
+      ? `${parks[0]} anchors the green space${month >= 10 || month <= 3 ? ', though it shifts to cold-weather use this time of year' : ' and is at its best right now'}.`
+      : ''
+    const seasonNote = month >= 5 && month <= 9
+      ? `${monthName} is prime time — outdoor dining and the parks are at their peak.`
+      : month === 10
+        ? `October is when indoor spots carry the week; campus events fill out the calendar through the end of the month.`
+        : `${monthName} skews toward indoor spots and weekend meals rather than parks and patios.`
+    return `${neighborhood} has ${sceneStrength}${bars > 30 ? `, and a bar scene large enough to suit different nights out` : ''}. ${parkNote ? parkNote + ' ' : ''}${seasonNote} Worth pulling up the map view here to see what's actually closest to your block.`
   }
 
   // Neighborhood profile
@@ -546,14 +610,80 @@ export async function runBrief(req: BriefRequest): Promise<ChatResponse> {
   }
 }
 
+const SEASONAL_CONTEXT: Record<string, string> = {
+  spring: 'April in Chicago. Temperatures warming to 50–65°F. CTA delays easing after winter. Outdoor seating reopening.',
+  summer: 'July in Chicago. Heat advisories common. Peak street festival season. Lakefront packed. CTA ridership high but frequent delays.',
+  autumn: 'October in Chicago. Temperatures dropping fast. 311 requests climbing — potholes, tree debris. Last weeks of outdoor dining.',
+  winter: 'January in Chicago. Wind chills below 0°F. Heating complaint calls at annual peak. CTA delays frequent. Streets icy.',
+}
+
+function buildSimNarrationPrompt(
+  profile: UserProfile,
+  neighborhood: string,
+  month: number,
+  rawResults: ToolResult[],
+  prevMonthSummaries?: string[],
+  actContext?: string,
+): { system: string; user: string } {
+  const monthName = MONTH_NAMES[month - 1] ?? 'this month'
+
+  const crimeR = rawResults.find((r): r is CrimeResult => 'total' in r && 'by_type' in r)
+  const transitR = rawResults.find(isTransitResult)
+  const serviceR = rawResults.find(isServiceResult)
+  const entertainmentR = rawResults.find((r) => 'places' in r && 'center' in r)
+  const housingR = rawResults.find(isHousingResult)
+
+  const prioritiesStr = Object.entries(profile.priorities)
+    .sort((a, b) => b[1] - a[1])
+    .map(([k]) => k.replaceAll(/([A-Z])/g, ' $1').toLowerCase())
+    .join(', ')
+
+  const memorySection = prevMonthSummaries && prevMonthSummaries.length > 0
+    ? `\n\nPrevious months (for continuity only — do not repeat):\n${prevMonthSummaries.map((s, i) => `- Month ${month - prevMonthSummaries.length + i}: ${s}`).join('\n')}`
+    : ''
+
+  const digest = [
+    crimeR ? `Crime this month: ${crimeR.total} total incidents (${crimeR.violent_count ?? '?'} violent, ${crimeR.property_count ?? '?'} property). Trend: ${crimeR.trend ?? 'unknown'}.` : null,
+    transitR ? `Transit this month: ${transitR.bus_ridership.toLocaleString()} bus riders, ${transitR.l_ridership.toLocaleString()} L riders. Crowding: ${transitR.crowding_level}. Avg peak wait: ${transitR.avg_peak_wait_minutes} min.` : null,
+    serviceR ? `311 this month: ${serviceR.total_requests} service requests, avg ${serviceR.avg_response_days} days response.` : null,
+    entertainmentR ? `Entertainment: ${(entertainmentR as Record<string, unknown>).total_places ?? '?'} places in the neighborhood this month.` : null,
+  ].filter(Boolean).join('\n')
+
+  const seasonalLine = actContext && SEASONAL_CONTEXT[actContext] ? `\n\nSeasonal context: ${SEASONAL_CONTEXT[actContext]}` : ''
+  const system = `You are Sam, a neighborhood life advisor for Chicago. You speak in second person, present tense. You narrate what the user's daily life feels like this month, grounded entirely in the data provided. Never invent facts not in the data. If data is sparse, say so directly. Be specific, warm, and honest.${seasonalLine}`
+
+  const user = `It is ${monthName} in ${neighborhood}.
+The user's profile: budget $${profile.monthlyBudget ?? profile.budgetRange}/month, commute preference: ${profile.commutePref}, workplace: ${profile.workplace}, priorities: ${prioritiesStr}.${memorySection}
+
+KEY FACTS FOR ${monthName.toUpperCase()} — YOU MUST USE THESE EXACT NUMBERS:
+${digest || '(no data available this month)'}
+
+Full data for context:
+CRIME: ${JSON.stringify(crimeR ?? {})}
+TRANSIT: ${JSON.stringify(transitR ?? {})}
+311 SERVICES: ${JSON.stringify(serviceR ?? {})}
+ENTERTAINMENT: ${JSON.stringify(entertainmentR ?? {})}
+HOUSING: ${JSON.stringify(housingR ?? {})}
+
+Write 3 paragraphs. Each paragraph MUST quote at least one specific number from KEY FACTS above. Do not use round or approximate numbers if the real number is available. Do not repeat the same statistic in two paragraphs. The numbers above are specific to ${monthName} — not a yearly average.
+
+1. Morning and commute — what does getting to work feel like this month? Name the actual ridership or wait-time number.
+2. Safety and street feel — what does the neighborhood feel like this month? Name the actual crime total.
+3. Evening and weekend — what is there to do? Name the actual place count or 311 response time.
+
+Do not mention housing costs unless this is January or 311 data shows housing-related service requests spiking this month.`
+
+  return { system, user }
+}
+
 export async function runMonthFullStream(
   req: BriefRequest,
-  onToolsDone: (payload: { mapActions: MapAction[]; toolsUsed: string[] }) => void,
+  onToolsDone: (payload: { mapActions: MapAction[]; toolsUsed: string[]; dataSummary: DataSummary }) => void,
   onChunk: (token: string) => void,
 ): Promise<ChatResponse> {
-  const { neighborhood, month, profile, prevMonthSummaries } = req
+  const { neighborhood, month, profile, prevMonthSummaries, actContext } = req
   const year = req.year ?? 2024
-  const toolNames = ['query_crime', 'query_transit', 'query_entertainment', 'query_commute', 'get_neighborhood_profile', 'query_housing']
+  const toolNames = ['query_crime', 'query_transit', 'query_311', 'query_entertainment', 'query_commute', 'get_neighborhood_profile', 'query_housing']
 
   const settled = await Promise.allSettled(
     toolNames.map((name) =>
@@ -570,8 +700,23 @@ export async function runMonthFullStream(
     }
   }
 
+  console.log(`Month ${month} tool results:`, rawResults)
+
+  const crimeR = rawResults.find((r): r is CrimeResult => 'total' in r && 'by_type' in r)
+  const transitR = rawResults.find(isTransitResult)
+  const serviceR = rawResults.find(isServiceResult)
+  const housingR = rawResults.find(isHousingResult)
+  const commuteR = rawResults.find(isCommuteResult)
+  const dataSummary: DataSummary = {
+    crime: crimeR?.total ?? null,
+    transitRiders: transitR ? Math.round((transitR.bus_ridership + transitR.l_ridership) / 1000) : null,
+    requests311: serviceR?.total_requests ?? null,
+    avgRent: housingR?.avg_rent_estimate ?? null,
+    commuteMinutes: commuteR?.estimated_minutes ?? null,
+  }
+
   const mapActions = await buildMapActions({ neighborhood, month, year, profile }, toolsUsed, rawResults)
-  onToolsDone({ mapActions, toolsUsed })
+  onToolsDone({ mapActions, toolsUsed, dataSummary })
 
   if (!process.env.GROQ_API_KEY) {
     const fallback = deterministicResponse(neighborhood, month, rawResults, profile)
@@ -580,42 +725,17 @@ export async function runMonthFullStream(
   }
 
   const groq = new Groq({ apiKey: process.env.GROQ_API_KEY })
-  const narrationPrompt = buildBriefNarrationPrompt(profile, neighborhood, month, prevMonthSummaries)
-  const monthName = MONTH_NAMES[month - 1] ?? 'this month'
-
-  const fakeToolCallsMsg: Groq.Chat.Completions.ChatCompletionMessageParam = {
-    role: 'assistant',
-    content: null,
-    tool_calls: toolsUsed.map((name, i) => ({
-      id: `stream-tool-${i}`,
-      type: 'function' as const,
-      function: {
-        name,
-        arguments: JSON.stringify(toolArgsFor(name, { message: '', neighborhood, month, year, profile })),
-      },
-    })),
-  }
-
-  const toolResultMessages: Groq.Chat.Completions.ChatCompletionMessageParam[] = rawResults.map((r, i) => ({
-    role: 'tool' as const,
-    tool_call_id: `stream-tool-${i}`,
-    content: JSON.stringify(r),
-  }))
+  const { system: narrationSystem, user: narrationUser } = buildSimNarrationPrompt(profile, neighborhood, month, rawResults, prevMonthSummaries, actContext)
 
   try {
     const stream = await groq.chat.completions.create({
       model: MODEL,
       temperature: 0.35,
-      max_tokens: 350,
+      max_tokens: 700,
       stream: true,
       messages: [
-        { role: 'system', content: narrationPrompt },
-        {
-          role: 'user',
-          content: `Summarize what ${monthName} is like in ${neighborhood} for this person — cover the feel of the commute, how safe the streets read, and what there is to do here this month.`,
-        },
-        fakeToolCallsMsg,
-        ...toolResultMessages,
+        { role: 'system', content: narrationSystem },
+        { role: 'user', content: narrationUser },
       ],
     })
 

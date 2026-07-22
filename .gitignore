@@ -19,7 +19,9 @@ tsconfig.tsbuildinfo
 .DS_Store
 /CityData
 crime_prediction_week7.ipynb
+notebooks/
 /reports
+test-results/
 NEWCityLivingSim_ProjectOverview copy.md
 .env*.local
 

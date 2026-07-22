@@ -1,47 +1,57 @@
 @import "tailwindcss";
 
 :root {
-  --background: #f8f1e8;
-  --background-strong: #e9dfcf;
-  --foreground: #263126;
-  --muted: #69735f;
-  --muted-strong: #4f5d49;
-  --panel: rgba(255, 249, 238, 0.93);
-  --panel-solid: #fff9ee;
-  --panel-border: rgba(38, 49, 38, 0.14);
-  --sage: #6f8d5f;
-  --sage-strong: #4f6f45;
-  --sage-50: #f2f5ec;
-  --sage-100: #dfe8d4;
-  --terracotta: #c76545;
-  --clay-50: #fbebe2;
-  --signal-good-border: #6f8d5f;
-  --signal-good-bg: #e4edda;
-  --signal-good-text: #4f6f45;
-  --signal-mixed-border: #b88746;
-  --signal-mixed-bg: #f5e7cf;
-  --signal-mixed-text: #6e5730;
-  --signal-caution-border: #c76545;
-  --signal-caution-bg: #f8e4db;
-  --signal-caution-text: #a14e36;
-  --signal-unknown-border: #7e8a80;
-  --signal-unknown-bg: #f3f1ec;
-  --signal-unknown-text: #66715f;
+  --cinema-ink: #111315;
+  --cinema-graphite: #242a2e;
+  --cinema-slate: #6e7474;
+  --cinema-ivory: #f4efe6;
+  --cinema-paper: #fbf8f2;
+  --cinema-line: rgba(17, 19, 21, 0.14);
+  --season-spring: #6f9b8b;
+  --season-summer: #d5a547;
+  --season-autumn: #b95f3f;
+  --season-winter: #536a8a;
+  --background: var(--cinema-ivory);
+  --background-strong: #e5ded3;
+  --foreground: var(--cinema-ink);
+  --muted: var(--cinema-slate);
+  --muted-strong: #4a5152;
+  --panel: rgba(251, 248, 242, 0.94);
+  --panel-solid: var(--cinema-paper);
+  --panel-border: var(--cinema-line);
+  --sage: var(--season-spring);
+  --sage-strong: #476f63;
+  --sage-50: #f0f5f2;
+  --sage-100: #dce9e4;
+  --terracotta: var(--season-autumn);
+  --clay-50: #f7e8e3;
+  --signal-good-border: #5d8878;
+  --signal-good-bg: #e5efeb;
+  --signal-good-text: #365e52;
+  --signal-mixed-border: #b38b3d;
+  --signal-mixed-bg: #f5ecd7;
+  --signal-mixed-text: #6d572f;
+  --signal-caution-border: #a74f38;
+  --signal-caution-bg: #f5e3dd;
+  --signal-caution-text: #7f3928;
+  --signal-unknown-border: #7d8383;
+  --signal-unknown-bg: #eeece8;
+  --signal-unknown-text: #616868;
   --accent: var(--terracotta);
-  --accent-strong: #9f4a32;
-  --lake: #6597b8;
-  --lake-strong: #315f78;
-  --park: #5f8d55;
-  --amber: #e7ad4e;
-  --rail: #7a8f50;
-  --civic: #7f6fb2;
-  --ink-soft: rgba(38, 49, 38, 0.72);
-  --shadow: 0 18px 44px rgba(68, 58, 42, 0.12);
-  --shadow-lg: 0 28px 80px rgba(68, 58, 42, 0.2);
-  --radius-sm: 6px;
+  --accent-strong: #8d3f2c;
+  --lake: #7187a5;
+  --lake-strong: var(--season-winter);
+  --park: #547d70;
+  --amber: var(--season-summer);
+  --rail: #687a74;
+  --civic: #706988;
+  --ink-soft: rgba(17, 19, 21, 0.72);
+  --shadow: 0 18px 48px rgba(17, 19, 21, 0.12);
+  --shadow-lg: 0 30px 90px rgba(17, 19, 21, 0.24);
+  --radius-sm: 5px;
   --radius-md: 8px;
-  --radius-lg: 12px;
-  --radius-xl: 18px;
+  --radius-lg: 14px;
+  --radius-xl: 22px;
 }
 
 * {
@@ -49,14 +59,14 @@
 }
 
 html {
-  background: linear-gradient(135deg, #fff7ec 0%, #e8dcc9 48%, #dce8eb 100%);
+  background: var(--cinema-ink);
 }
 
 body {
   margin: 0;
   min-height: 100vh;
   color: var(--foreground);
-  font-family: "SF Pro Text", "Inter", "Segoe UI", Roboto, "Helvetica Neue", Arial, system-ui, sans-serif;
+  font-family: "Avenir Next", "SF Pro Text", "Inter", "Segoe UI", Roboto, "Helvetica Neue", Arial, system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
 }
@@ -76,7 +86,7 @@ a {
 }
 
 :where(button, a, input, select, textarea):focus-visible {
-  outline: 3px solid rgba(227, 167, 47, 0.56);
+  outline: 3px solid color-mix(in srgb, var(--season-summer) 72%, white);
   outline-offset: 2px;
 }
 
@@ -92,15 +102,14 @@ input[type="range"] {
 
 .atlas-page {
   background:
-    radial-gradient(circle at 8% 10%, rgba(231, 173, 78, 0.22), transparent 28%),
-    linear-gradient(120deg, rgba(79, 111, 69, 0.94) 0%, rgba(111, 141, 95, 0.78) 41%, rgba(247, 240, 227, 0.97) 41.2%, rgba(247, 240, 227, 0.97) 100%);
+    linear-gradient(90deg, transparent 0 24.8%, rgba(255,255,255,0.08) 24.9% 25%, transparent 25.1% 49.8%, rgba(255,255,255,0.08) 49.9% 50%, transparent 50.1% 74.8%, rgba(255,255,255,0.08) 74.9% 75%, transparent 75.1%),
+    linear-gradient(135deg, var(--cinema-graphite) 0%, #30383b 39.8%, var(--cinema-ivory) 40%, var(--cinema-paper) 100%);
 }
 
 .atlas-page-neighborhood {
   background:
-    radial-gradient(circle at 12% 8%, rgba(231, 173, 78, 0.18), transparent 24%),
-    radial-gradient(circle at 88% 20%, rgba(101, 151, 184, 0.2), transparent 28%),
-    linear-gradient(180deg, #fbf4e8 0%, #f7f0e3 54%, #f0eadc 100%);
+    radial-gradient(circle at 86% 8%, rgba(83, 106, 138, 0.13), transparent 28%),
+    linear-gradient(180deg, var(--cinema-paper) 0%, var(--cinema-ivory) 100%);
 }
 
 .atlas-page-neighborhood .atlas-topbar {
@@ -141,10 +150,16 @@ input[type="range"] {
 
 .atlas-brand-mark {
   display: inline-block;
-  width: 12px;
+  width: 13px;
   height: 24px;
-  border-radius: 999px;
-  background: linear-gradient(180deg, var(--amber), var(--terracotta));
+  border-radius: 2px;
+  background: linear-gradient(
+    180deg,
+    var(--season-spring) 0 25%,
+    var(--season-summer) 25% 50%,
+    var(--season-autumn) 50% 75%,
+    var(--season-winter) 75% 100%
+  );
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.34);
 }
 
@@ -165,8 +180,8 @@ input[type="range"] {
 .atlas-kicker {
   font-size: 12px;
   font-weight: 700;
-  letter-spacing: 0;
-  text-transform: none;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
 }
 
 .atlas-button-primary,
@@ -184,14 +199,15 @@ input[type="range"] {
 }
 
 .atlas-button-primary {
-  border: 1px solid color-mix(in srgb, var(--sage) 88%, white);
-  background: var(--sage);
+  border: 1px solid var(--cinema-ink);
+  background: var(--cinema-ink);
   color: white;
-  box-shadow: 0 14px 28px rgba(79, 111, 69, 0.22);
+  box-shadow: 0 14px 30px rgba(17, 19, 21, 0.2);
 }
 
 .atlas-button-primary:hover {
-  background: var(--sage-strong);
+  border-color: var(--cinema-graphite);
+  background: var(--cinema-graphite);
 }
 
 .atlas-button-secondary {
@@ -224,8 +240,145 @@ input[type="range"] {
 }
 
 .atlas-input:focus {
-  border-color: rgba(111, 141, 95, 0.66);
-  box-shadow: 0 0 0 4px rgba(111, 141, 95, 0.14);
+  border-color: var(--season-winter);
+  box-shadow: 0 0 0 4px rgba(83, 106, 138, 0.14);
+}
+
+.film-display {
+  font-family: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+  font-weight: 500;
+  letter-spacing: -0.035em;
+}
+
+.film-caption {
+  font-size: 11px;
+  font-weight: 750;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.film-frame {
+  border: 1px solid rgba(244, 239, 230, 0.18);
+  border-radius: var(--radius-lg);
+  background: rgba(17, 19, 21, 0.72);
+  box-shadow: var(--shadow-lg);
+  backdrop-filter: blur(18px);
+}
+
+.season-strip {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  overflow: hidden;
+  border-radius: 999px;
+}
+
+.season-strip > span {
+  height: 4px;
+}
+
+.season-strip > span:nth-child(1) { background: var(--season-spring); }
+.season-strip > span:nth-child(2) { background: var(--season-summer); }
+.season-strip > span:nth-child(3) { background: var(--season-autumn); }
+.season-strip > span:nth-child(4) { background: var(--season-winter); }
+
+.journey-rail ol {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.journey-rail li {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.journey-rail li:not(:last-child)::after {
+  position: absolute;
+  top: 50%;
+  right: 8px;
+  left: 34px;
+  height: 1px;
+  background: var(--panel-border);
+  content: "";
+}
+
+.journey-node {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  width: 26px;
+  height: 26px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--panel-border);
+  border-radius: 999px;
+  background: var(--panel-solid);
+  color: var(--muted);
+}
+
+.journey-label {
+  position: relative;
+  z-index: 1;
+  overflow: hidden;
+  background: var(--panel-solid);
+  padding-right: 8px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.journey-rail li[data-state="complete"] .journey-node,
+.journey-rail li[data-state="current"] .journey-node {
+  border-color: var(--cinema-ink);
+  background: var(--cinema-ink);
+  color: white;
+}
+
+.journey-rail li[data-state="current"] {
+  color: var(--foreground);
+}
+
+.journey-rail-inverse li {
+  color: rgba(255,255,255,0.52);
+}
+
+.journey-rail-inverse li:not(:last-child)::after {
+  background: rgba(255,255,255,0.16);
+}
+
+.journey-rail-inverse .journey-node,
+.journey-rail-inverse .journey-label {
+  border-color: rgba(255,255,255,0.2);
+  background: transparent;
+  color: inherit;
+}
+
+.journey-rail-inverse li[data-state="complete"] .journey-node,
+.journey-rail-inverse li[data-state="current"] .journey-node {
+  border-color: var(--cinema-ivory);
+  background: var(--cinema-ivory);
+  color: var(--cinema-ink);
+}
+
+.journey-rail-inverse li[data-state="current"] {
+  color: white;
+}
+
+.journey-rail-compact .journey-label {
+  display: none;
+}
+
+.journey-rail-compact li:not(:last-child)::after {
+  right: 6px;
+  left: 32px;
 }
 
 .atlas-scrollbar {
@@ -305,9 +458,9 @@ input[type="range"] {
   word-break: normal !important;
 }
 
-.community-area-label-marker > div[style*="#c76545"],
-.community-area-label-marker > div[style*="#4f6f45"],
-.community-area-label-marker > div[style*="#e7ad4e"],
+.community-area-label-marker > div[style*="#b95f3f"],
+.community-area-label-marker > div[style*="#476f63"],
+.community-area-label-marker > div[style*="#d5a547"],
 .community-area-label-marker > div[style*="199, 101, 69"],
 .community-area-label-marker > div[style*="79, 111, 69"],
 .community-area-label-marker > div[style*="231, 173, 78"] {
@@ -345,5 +498,58 @@ input[type="range"] {
   .atlas-brand-mark {
     width: 10px;
     height: 20px;
+  }
+}
+
+@media (max-width: 680px) {
+  .journey-label {
+    display: none;
+  }
+
+  .journey-rail li:not(:last-child)::after {
+    right: 7px;
+    left: 32px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* Cinematic 4-act atmosphere (SeasonalAtmosphere.tsx) */
+@keyframes sim-fall {
+  0% {
+    transform: translate3d(0, -6vh, 0) rotate(0deg);
+  }
+  100% {
+    transform: translate3d(var(--sim-drift, 0px), 106vh, 0) rotate(var(--sim-spin, 0deg));
+  }
+}
+
+@keyframes sim-glow {
+  0%,
+  100% {
+    opacity: 0.75;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+@keyframes sim-act-fade {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
   }
 }

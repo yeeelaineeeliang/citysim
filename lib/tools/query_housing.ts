@@ -48,12 +48,16 @@ async function fromSupabase(neighborhood: string): Promise<HousingResult | 'not_
 
   if (!data) return 'not_found'  // area known but no affordable housing developments recorded
 
+  const avgRent = (data.avg_rent_estimate as number | null) ?? null
   return {
     affordable_units: (data.affordable_units as number) ?? 0,
     affordable_developments: (data.affordable_developments as number) ?? 0,
-    avg_rent_estimate: (data.avg_rent_estimate as number) ?? 0,
+    // null stays null — coercing to 0 would flow into verdicts as "$0 rent fits any budget"
+    avg_rent_estimate: avgRent,
     median_rent_estimate: (data.median_rent_estimate as number | null) ?? null,
-    note: STOCK_NOTE,
+    note: avgRent === null
+      ? `${STOCK_NOTE} No rent estimate is loaded for this area; do not fabricate rent figures.`
+      : STOCK_NOTE,
   }
 }
 
