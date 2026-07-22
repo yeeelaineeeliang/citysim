@@ -1,6 +1,7 @@
 import { auth } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
 import type { ChatMessage, UserProfile } from "@/lib/tools/types";
+import { createSupabaseAdminClient, hasSupabaseCredentials } from "@/lib/supabase";
 
 const MAX_BODY_BYTES = 32_768;
 const MAX_MESSAGE_CHARS = 1_000;
@@ -156,17 +157,62 @@ export function checkRateLimit(
   return { allowed: true };
 }
 
-export function rateLimitRequest(
+type RateLimitResult = { allowed: true } | { allowed: false; retryAfterSeconds: number };
+
+const SUPABASE_RATE_LIMIT_TIMEOUT_MS = 800;
+
+// Test hook: lets tests force the in-memory path even when env vars are set.
+let rateLimitBackendDisabledForTests = false;
+export function __disableSupabaseRateLimitForTests(disabled: boolean) {
+  rateLimitBackendDisabledForTests = disabled;
+}
+
+// Shared-store rate limit via the rate_limit_hit RPC (one atomic round trip).
+// Returns null on any failure/timeout so the caller falls back to in-memory.
+async function checkRateLimitSupabase(key: string, policy: RateLimitPolicy): Promise<RateLimitResult | null> {
+  try {
+    const supabase = createSupabaseAdminClient();
+    const rpc = supabase.rpc("rate_limit_hit", {
+      p_key: key,
+      p_max: policy.max,
+      p_window_ms: policy.windowMs,
+    });
+    const timeout = new Promise<null>((resolve) =>
+      setTimeout(() => resolve(null), SUPABASE_RATE_LIMIT_TIMEOUT_MS),
+    );
+    const result = await Promise.race([rpc, timeout]);
+    if (!result || result.error) return null;
+    const row = (Array.isArray(result.data) ? result.data[0] : result.data) as
+      | { allowed: boolean; retry_after_seconds: number }
+      | undefined;
+    if (!row || typeof row.allowed !== "boolean") return null;
+    return row.allowed
+      ? { allowed: true }
+      : { allowed: false, retryAfterSeconds: Math.max(1, row.retry_after_seconds ?? 1) };
+  } catch {
+    return null;
+  }
+}
+
+export async function checkRateLimitAsync(key: string, policy: RateLimitPolicy): Promise<RateLimitResult> {
+  if (hasSupabaseCredentials() && !rateLimitBackendDisabledForTests) {
+    const remote = await checkRateLimitSupabase(key, policy);
+    if (remote) return remote;
+  }
+  return checkRateLimit(key, policy);
+}
+
+export async function rateLimitRequest(
   request: Request,
   userId: string,
   policy: RateLimitPolicy,
-): NextResponse | null {
-  const userResult = checkRateLimit(`${policy.name}:user:${userId}`, policy);
+): Promise<NextResponse | null> {
+  const [userResult, ipResult] = await Promise.all([
+    checkRateLimitAsync(`${policy.name}:user:${userId}`, policy),
+    checkRateLimitAsync(`${policy.name}:ip:${getClientIp(request)}`, policy),
+  ]);
   if (!userResult.allowed) return rateLimitError(userResult.retryAfterSeconds);
-
-  const ipResult = checkRateLimit(`${policy.name}:ip:${getClientIp(request)}`, policy);
   if (!ipResult.allowed) return rateLimitError(ipResult.retryAfterSeconds);
-
   return null;
 }
 
@@ -319,12 +365,16 @@ export function validateChatBody(value: unknown): Validation<{
   };
 }
 
+const VALID_ACT_SEASONS = ["spring", "summer", "autumn", "winter"] as const;
+type ActSeason = (typeof VALID_ACT_SEASONS)[number];
+
 export function validateBriefBody(value: unknown): Validation<{
   neighborhood: string;
   month: number;
   year: number;
   profile: UserProfile;
   prevMonthSummaries: string[];
+  actContext?: ActSeason;
 }> {
   if (!isRecord(value)) return { ok: false, error: "request body must be an object" };
 
@@ -347,7 +397,11 @@ export function validateBriefBody(value: unknown): Validation<{
     }
   }
 
-  return { ok: true, value: { neighborhood: neighborhood.value, month: month.value, year: year.value, profile: profile.value, prevMonthSummaries } };
+  const actContext = (typeof value.actContext === "string" && (VALID_ACT_SEASONS as readonly string[]).includes(value.actContext))
+    ? (value.actContext as ActSeason)
+    : undefined;
+
+  return { ok: true, value: { neighborhood: neighborhood.value, month: month.value, year: year.value, profile: profile.value, prevMonthSummaries, actContext } };
 }
 
 export function validateOpeningBody(value: unknown): Validation<{
@@ -370,6 +424,52 @@ export function validateMatchBody(value: unknown): Validation<{ profile: UserPro
   if (!topN.ok) return topN;
 
   return { ok: true, value: { profile: profile.value, topN: topN.value } };
+}
+
+const SIM_RUN_SUMMARY_FIELDS = ["crime", "transitRiders", "requests311", "avgRent", "commuteMinutes"] as const;
+const MAX_SUMMARY_VALUE = 10_000_000;
+
+export function validateSimRunBody(value: unknown): Validation<{
+  neighborhood: string;
+  year: number;
+  profile: UserProfile;
+  actSummaries: Record<string, Record<string, number | null>>;
+}> {
+  if (!isRecord(value)) return { ok: false, error: "request body must be an object" };
+
+  const neighborhood = boundedString(value.neighborhood, "neighborhood", MAX_NEIGHBORHOOD_CHARS);
+  if (!neighborhood.ok) return neighborhood;
+
+  const year = optionalYear(value.year);
+  if (!year.ok) return year;
+
+  const profile = validateProfile(value.profile);
+  if (!profile.ok) return profile;
+
+  if (!isRecord(value.actSummaries)) return { ok: false, error: "actSummaries must be an object" };
+  const actSummaries: Record<string, Record<string, number | null>> = {};
+  let actCount = 0;
+  for (const act of ["1", "2", "3", "4"]) {
+    const raw = value.actSummaries[act];
+    if (raw === undefined || raw === null) continue;
+    if (!isRecord(raw)) return { ok: false, error: `actSummaries.${act} must be an object` };
+    const summary: Record<string, number | null> = {};
+    for (const field of SIM_RUN_SUMMARY_FIELDS) {
+      const v = raw[field];
+      if (v === undefined || v === null) {
+        summary[field] = null;
+      } else if (typeof v === "number" && Number.isFinite(v) && v >= 0 && v <= MAX_SUMMARY_VALUE) {
+        summary[field] = v;
+      } else {
+        return { ok: false, error: `actSummaries.${act}.${field} must be a finite non-negative number or null` };
+      }
+    }
+    actSummaries[act] = summary;
+    actCount += 1;
+  }
+  if (actCount === 0) return { ok: false, error: "actSummaries must include at least one act" };
+
+  return { ok: true, value: { neighborhood: neighborhood.value, year: year.value, profile: profile.value, actSummaries } };
 }
 
 export function validateGeocodeQuery(q: string | null): Validation<string | null> {

@@ -3,7 +3,7 @@ import Groq from "groq-sdk";
 import type { StructuredSimulationData } from "@/lib/querySimulationData";
 
 const NARRATIVE_PROMPT = (structuredData: StructuredSimulationData) => `
-You are writing a first-person simulation for CityLiving Sim — a tool that helps people feel what living in a neighborhood would actually be like, before they sign a lease.
+You are writing a first-person simulation for LivingThere — a tool that helps people feel what living in a neighborhood would actually be like, before they sign a lease.
 
 The reader is a UChicago student considering Hyde Park. They want to know: will commuting feel easy or stressful? Will October be manageable or exhausting?
 

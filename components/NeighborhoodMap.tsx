@@ -20,8 +20,8 @@ interface Props {
   onSelect: (name: string) => void;
 }
 
-const ACCENT = "#6f8d5f";
-const WORKPLACE = "#c76545";
+const ACCENT = "#6f9b8b";
+const WORKPLACE = "#b95f3f";
 
 function escapeHtml(value: string) {
   return value

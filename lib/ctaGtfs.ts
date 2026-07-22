@@ -1,6 +1,6 @@
 import ctaGtfsCache from "@/data/cta-gtfs-cache.json";
 import { thinPolyline } from "@/lib/decodePolyline";
-import type { CommuteRouteSegment, MapPoint } from "@/lib/tools/types";
+import type { CommuteRouteSegment, MapPoint, TransitStop } from "@/lib/tools/types";
 
 export interface CachedCtaRouteShape {
   routeId: string;
@@ -229,4 +229,27 @@ export function selectTransitCorridorFromRoutes(
 
 export function findCachedTransitCorridor(query: TransitCorridorQuery): TransitCorridorResult | null {
   return selectTransitCorridorFromRoutes(loadCachedCtaRoutes(), query);
+}
+
+export function getStopsNear(center: MapPoint, radiusMiles: number): TransitStop[] {
+  const routes = loadCachedCtaRoutes();
+  const seen = new Set<string>();
+  const result: TransitStop[] = [];
+  for (const route of routes) {
+    if (!route.stops) continue;
+    for (const stop of route.stops) {
+      if (distanceMiles(center, { lat: stop.lat, lng: stop.lng }) > radiusMiles) continue;
+      const key = `${stop.name}|${stop.lat}|${stop.lng}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      result.push({
+        name: stop.name,
+        lat: stop.lat,
+        lng: stop.lng,
+        routeLabel: `Route ${route.routeShortName}`,
+        mode: route.mode ?? "bus",
+      });
+    }
+  }
+  return result;
 }

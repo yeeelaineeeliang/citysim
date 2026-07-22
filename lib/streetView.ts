@@ -1,5 +1,6 @@
 import { createSupabaseAdminClient, hasSupabaseCredentials } from "@/lib/supabase";
 import { getCoordinateBySlug, getAllCoordinates } from "@/lib/neighborhoodCoordinates";
+import type { ActSeason } from "@/app/sim/types";
 
 const CITY_SLUG = "chicago";
 const STREET_VIEW_SIZE = "640x640";
@@ -8,6 +9,13 @@ const STREET_VIEW_HEADING = 0;
 const STREET_VIEW_PITCH = 0;
 const STREET_VIEW_RADIUS = 80;
 const STREET_VIEW_SOURCE = "outdoor";
+
+const SEASON_HEADING: Record<ActSeason, number> = {
+  spring: 0,
+  summer: 90,
+  autumn: 180,
+  winter: 270,
+};
 
 type CityRow = {
   id: string;
@@ -37,12 +45,12 @@ function getGoogleMapsApiKey() {
   return process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY?.trim() ?? "";
 }
 
-function buildStreetViewStaticUrl(latitude: number, longitude: number, apiKey: string) {
+function buildStreetViewStaticUrl(latitude: number, longitude: number, apiKey: string, heading = STREET_VIEW_HEADING) {
   const url = new URL("https://maps.googleapis.com/maps/api/streetview");
   url.searchParams.set("size", STREET_VIEW_SIZE);
   url.searchParams.set("location", `${latitude},${longitude}`);
   url.searchParams.set("fov", String(STREET_VIEW_FOV));
-  url.searchParams.set("heading", String(STREET_VIEW_HEADING));
+  url.searchParams.set("heading", String(heading));
   url.searchParams.set("pitch", String(STREET_VIEW_PITCH));
   url.searchParams.set("radius", String(STREET_VIEW_RADIUS));
   url.searchParams.set("source", STREET_VIEW_SOURCE);
@@ -84,7 +92,13 @@ async function getChicagoCityId() {
   return data.id;
 }
 
+// The street_view_cache unique index is (city_id, community_area_id, season) —
+// the season-less variant maps to spring (heading 0°, same URL as before the migration).
 export async function getStreetViewImageForCommunityArea(slug = "hyde-park"): Promise<StreetViewImage | null> {
+  return getStreetViewImageForSeason(slug, "spring");
+}
+
+export async function getStreetViewImageForSeason(slug: string, season: ActSeason): Promise<StreetViewImage | null> {
   const apiKey = getGoogleMapsApiKey();
   if (!apiKey || !hasSupabaseCredentials()) return null;
 
@@ -114,13 +128,15 @@ export async function getStreetViewImageForCommunityArea(slug = "hyde-park"): Pr
       return null;
     }
 
-    const imageUrl = buildStreetViewStaticUrl(latitude, longitude, apiKey);
+    const heading = SEASON_HEADING[season];
+    const imageUrl = buildStreetViewStaticUrl(latitude, longitude, apiKey, heading);
 
     const { data: cached } = await supabase
       .from("street_view_cache")
       .select("image_url")
       .eq("city_id", cityId)
       .eq("community_area_id", area.id)
+      .eq("season", season)
       .maybeSingle<StreetViewCacheRow>();
 
     if (cached?.image_url === imageUrl) {
@@ -140,9 +156,10 @@ export async function getStreetViewImageForCommunityArea(slug = "hyde-park"): Pr
     const { error: cacheError } = await supabase.from("street_view_cache").upsert({
       city_id: cityId,
       community_area_id: area.id,
+      season,
       latitude,
       longitude,
-      heading: STREET_VIEW_HEADING,
+      heading,
       pitch: STREET_VIEW_PITCH,
       fov: STREET_VIEW_FOV,
       image_url: imageUrl,
@@ -153,9 +170,10 @@ export async function getStreetViewImageForCommunityArea(slug = "hyde-park"): Pr
         radius: STREET_VIEW_RADIUS,
         source_filter: STREET_VIEW_SOURCE,
         size: STREET_VIEW_SIZE,
+        season,
       },
     }, {
-      onConflict: "city_id,community_area_id",
+      onConflict: "city_id,community_area_id,season",
     });
 
     if (cacheError) return null;
@@ -193,6 +211,7 @@ export async function cacheStreetViewImagesForAllCommunityAreas() {
     .from("street_view_cache")
     .select("community_area_id, image_url")
     .eq("city_id", cityId)
+    .eq("season", "spring")
     .returns<Array<{ community_area_id: string; image_url: string | null }>>();
 
   if (existingError) throw new Error(`Failed to query street view cache: ${existingError.message}`);
@@ -223,6 +242,7 @@ export async function cacheStreetViewImagesForAllCommunityAreas() {
     rowsToInsert.push({
       city_id: cityId,
       community_area_id: area.id,
+      season: "spring",
       latitude: centroid.lat,
       longitude: centroid.lng,
       heading: STREET_VIEW_HEADING,
@@ -243,7 +263,7 @@ export async function cacheStreetViewImagesForAllCommunityAreas() {
   if (rowsToInsert.length > 0) {
     const { error } = await supabase
       .from("street_view_cache")
-      .upsert(rowsToInsert, { onConflict: "city_id,community_area_id" });
+      .upsert(rowsToInsert, { onConflict: "city_id,community_area_id,season" });
     if (error) throw new Error(`Failed to cache Street View URLs: ${error.message}`);
   }
 

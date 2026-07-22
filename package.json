@@ -1,5 +1,5 @@
 {
-  "name": "cityliving-sim",
+  "name": "livingthere",
   "version": "0.1.0",
   "private": true,
   "scripts": {
@@ -14,7 +14,14 @@
     "preprocess": "tsx scripts/preprocess_local_data.ts",
     "cache:street-view": "tsx scripts/cache_street_view.ts",
     "ingest:places": "tsx scripts/ingest_entertainment_places.ts",
-    "ingest:cta-gtfs": "tsx scripts/ingest_cta_gtfs.ts"
+    "ingest:cta-gtfs": "tsx scripts/ingest_cta_gtfs.ts",
+    "ingest:crime": "tsx scripts/ingest/crime_2024.ts",
+    "ingest:311": "tsx scripts/ingest/requests311_2024.ts",
+    "ingest:transit": "tsx scripts/ingest/transit_2024.ts",
+    "ingest:housing": "tsx scripts/ingest/housing_2024.ts",
+    "ingest:entertainment": "tsx scripts/ingest/entertainment_2024.ts",
+    "ingest:civic": "tsx scripts/ingest_civic.ts",
+    "verify:civic": "tsx scripts/verify_civic.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.91.1",
@@ -27,10 +34,12 @@
     "leaflet": "^1.9.4",
     "lucide-react": "^1.16.0",
     "mapbox-gl": "^3.24.0",
+    "mapillary-js": "^4.1.2",
     "next": "^16.2.6",
     "react": "^19.2.5",
     "react-dom": "^19.2.5",
-    "react-leaflet": "^5.0.0"
+    "react-leaflet": "^5.0.0",
+    "suncalc": "^1.9.0"
   },
   "devDependencies": {
     "@playwright/test": "^1.60.0",
@@ -40,9 +49,14 @@
     "@types/node": "^25.6.0",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
+    "@types/suncalc": "^1.9.2",
     "playwright": "^1.60.0",
     "tailwindcss": "^4.2.4",
-    "tsx": "^4.21.0",
+    "tsx": "^4.23.1",
     "typescript": "^6.0.3"
+  },
+  "overrides": {
+    "postcss": "8.5.22",
+    "sharp": "^0.35.3"
   }
 }

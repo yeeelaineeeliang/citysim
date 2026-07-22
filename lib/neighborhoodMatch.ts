@@ -439,12 +439,13 @@ function buildMatchDescriptors(
   }
 
   if (rent !== null && rent > 0) {
+    const rentLabel = Math.round(rent).toLocaleString();
     if (budget !== null && rent <= budget) {
-      labels.push(`Est. $${rent.toLocaleString()}/mo — fits your budget`);
+      labels.push(`Est. $${rentLabel}/mo — fits your budget`);
     } else if (budget !== null && rent > budget) {
-      labels.push(`Est. $${rent.toLocaleString()}/mo — over budget`);
+      labels.push(`Est. $${rentLabel}/mo — over budget`);
     } else if (budget === null && budgetFloor !== null) {
-      labels.push(`Est. $${rent.toLocaleString()}/mo`);
+      labels.push(`Est. $${rentLabel}/mo`);
     }
   } else if (budgetFit(neighborhood, budget, budgetFloor) !== null) {
     labels.push("Fits budget");

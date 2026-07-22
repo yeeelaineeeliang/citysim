@@ -1,10 +1,10 @@
-# CityLiving Sim
+# LivingThere
 
 Vercel: https://citysim-gamma.vercel.app/
 
 **Feel a neighborhood before you sign a lease.**
 
-CityLiving Sim helps people choose where to live in Chicago by turning civic data into a practical, personal preview of daily life. Instead of scanning static scores or generic neighborhood blurbs, users enter their budget, workplace, commute preference, and lifestyle priorities, then explore how a neighborhood would actually work for them.
+LivingThere helps people choose where to live in Chicago by turning civic data into a practical, personal preview of daily life. Instead of scanning static scores or generic neighborhood blurbs, users enter their budget, workplace, commute preference, and lifestyle priorities, then explore how a neighborhood would actually work for them.
 
 The product combines maps, Street View imagery, neighborhood matching, and a grounded AI advisor. It can answer questions like:
 
@@ -20,7 +20,7 @@ Every civic answer is backed by tool-returned data. If the data is sparse, the a
 
 Choosing a neighborhood is not just a rent calculation. It is commute friction, street safety, city services, transit reliability, local amenities, and the feel of ordinary routines.
 
-CityLiving Sim brings those pieces together in one place:
+LivingThere brings those pieces together in one place:
 
 - **Personal fit:** budget, workplace, commute mode, and priorities shape the recommendation.
 - **Grounded answers:** the chat agent must query structured tools before narrating.
@@ -38,7 +38,7 @@ CityLiving Sim brings those pieces together in one place:
 
 ## How It Works
 
-CityLiving Sim uses a tool-first agent architecture:
+LivingThere uses a tool-first agent architecture:
 
 ```text
 User profile + selected neighborhood

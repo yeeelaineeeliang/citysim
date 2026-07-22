@@ -41,7 +41,7 @@ function buildSystemPrompt({
   extraRule?: string;
 }) {
   return `
-You are a neighborhood simulation agent for CityLiving Sim.
+You are a neighborhood simulation agent for LivingThere.
 You place the user inside a specific month of living in a
 Chicago neighborhood and answer questions in second-person
 present tense, as if they are currently living there.
@@ -140,7 +140,7 @@ export async function POST(request: Request) {
   const authResult = await requireApiUser();
   if (!authResult.ok) return authResult.response;
 
-  const rateLimited = rateLimitRequest(request, authResult.userId, RATE_LIMITS.ai);
+  const rateLimited = await rateLimitRequest(request, authResult.userId, RATE_LIMITS.ai);
   if (rateLimited) return rateLimited;
 
   const tooLarge = rejectOversizedRequest(request);

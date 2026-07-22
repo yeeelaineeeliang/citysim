@@ -32,9 +32,9 @@ export function AtlasHeroMap() {
           data={communityAreaData}
           interactive={false}
           style={() => ({
-            color: "#fff9ee",
-            fillColor: "#6f8d5f",
-            fillOpacity: 0.035,
+            color: "#f4efe6",
+            fillColor: "#536a8a",
+            fillOpacity: 0.055,
             opacity: 0.72,
             weight: 1.15,
           })}

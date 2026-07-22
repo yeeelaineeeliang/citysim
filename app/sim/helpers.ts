@@ -9,13 +9,30 @@ export const MONTH_NAMES = [
 export const MONTH_SHORT = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 export const SIM_YEAR = 2024;
 
+// Worded to read naturally both before a run and in the post-run debrief.
+// Keep the demo-QA keywords intact (crime / commute / service / weekends /
+// afford) — lib/demoData.ts matchDemoQA and the e2e spec key off them.
 export const SUGGESTED_QUESTIONS = [
-  "What is crime like here this month?",
+  "What is crime like here this season?",
   "What is my morning commute like?",
   "How responsive is the city to service issues?",
   "What can I do on weekends here?",
   "Can I afford to live here?",
 ];
+
+export function commuteModePhrase(mode?: UserProfile["commutePref"]) {
+  if (mode === "driving") return "drive";
+  if (mode === "walking") return "walk";
+  if (mode === "biking") return "bike";
+  return "by bus/transit";
+}
+
+export function displayWorkplaceContext(workplace?: string) {
+  const trimmed = workplace?.trim();
+  if (!trimmed || trimmed.toLowerCase() === "not specified") return null;
+  const withoutChicago = trimmed.replace(/,\s*Chicago(?:,\s*(?:IL|Illinois))?$/i, "");
+  return withoutChicago.replace(/^The University of Chicago$/i, "University of Chicago");
+}
 
 export const ALL_NEIGHBORHOODS = NEIGHBORHOOD_COORDINATES.map((c) => c.name).sort();
 

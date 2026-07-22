@@ -3,10 +3,10 @@
 import { Show, SignInButton, SignUpButton, UserButton } from "@clerk/nextjs";
 
 const secondaryButton =
-  "inline-flex h-8 items-center justify-center rounded-[var(--radius-sm)] border border-white/35 bg-white/86 px-2 text-[11px] font-bold text-[color:var(--foreground)] transition hover:border-white hover:bg-white sm:px-3 sm:text-xs";
+  "inline-flex h-8 items-center justify-center rounded-[var(--radius-sm)] border border-white/30 bg-[color:var(--cinema-paper)] px-2 text-[11px] font-bold text-[color:var(--cinema-ink)] transition hover:bg-white sm:px-3 sm:text-xs";
 
 const primaryButton =
-  "inline-flex h-8 items-center justify-center rounded-[var(--radius-sm)] bg-[color:var(--sage)] px-2 text-[11px] font-bold text-white transition hover:bg-[color:var(--sage-strong)] sm:px-3 sm:text-xs";
+  "inline-flex h-8 items-center justify-center rounded-[var(--radius-sm)] bg-[color:var(--cinema-ink)] px-2 text-[11px] font-bold text-white transition hover:bg-[color:var(--cinema-graphite)] sm:px-3 sm:text-xs";
 
 interface AuthActionsProps {
   className?: string;
@@ -32,6 +32,9 @@ export function AuthActions({ className = "" }: AuthActionsProps) {
       </Show>
 
       <Show when="signed-in">
+        <a href="/runs" className={secondaryButton}>
+          My seasons
+        </a>
         <UserButton
           appearance={{
             elements: {

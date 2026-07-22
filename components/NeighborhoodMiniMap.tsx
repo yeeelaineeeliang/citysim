@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useRef, useState } from "react"
-import { CircleMarker, GeoJSON as GeoJSONLayer, MapContainer, Marker, TileLayer, useMap } from "react-leaflet"
+import { GeoJSON as GeoJSONLayer, MapContainer, Marker, TileLayer, useMap } from "react-leaflet"
 import L from "leaflet"
 
 interface Area {
@@ -12,11 +12,18 @@ interface Area {
   boundaryGeojson?: GeoJSON.GeoJsonObject | null
 }
 
+interface Place {
+  id: string
+  name: string
+  category: string
+  lat: number
+  lng: number
+}
+
 interface Props {
   neighborhoodName: string
   currentLat: number
   currentLng: number
-  sequencePoints?: { lat: number; lng: number }[]
   heading?: number | null
 }
 
@@ -33,54 +40,75 @@ function validAreas(data: unknown): Area[] {
   })
 }
 
-function FitToBoundary({ boundary }: { boundary: GeoJSON.GeoJsonObject }) {
+function LockToBoundary({ boundary }: { boundary: GeoJSON.GeoJsonObject }) {
   const map = useMap()
+  const locked = useRef(false)
   useEffect(() => {
+    if (locked.current) return
     try {
       const bounds = L.geoJSON(boundary).getBounds()
-      if (bounds.isValid()) map.fitBounds(bounds.pad(0.12))
+      if (bounds.isValid()) {
+        map.fitBounds(bounds.pad(0.15))
+        locked.current = true
+      }
     } catch { /* invalid geojson */ }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [boundary])
-  return null
-}
-
-function FitToPoints({ points }: { points: { lat: number; lng: number }[] }) {
-  const map = useMap()
-  useEffect(() => {
-    if (points.length === 0) return
-    const bounds = L.latLngBounds(points.map((p) => L.latLng(p.lat, p.lng)))
-    if (bounds.isValid()) map.fitBounds(bounds.pad(0.5))
-    else map.setView([points[0].lat, points[0].lng], 16)
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
-  return null
-}
-
-function CameraFollower({ lat, lng }: { lat: number; lng: number }) {
-  const map = useMap()
-  const initialized = useRef(false)
-  useEffect(() => {
-    if (!initialized.current) {
-      map.setView([lat, lng], 16, { animate: false })
-      initialized.current = true
-    } else {
-      map.panTo([lat, lng], { animate: true, duration: 0.35 })
-    }
-  }, [lat, lng, map])
+  }, [boundary, map])
   return null
 }
 
 const BOUNDARY_STYLE = {
-  color: "#c76545",
-  fillColor: "#dfe8d4",
-  fillOpacity: 0.45,
-  opacity: 0.85,
-  weight: 2,
+  color: "#476f63",
+  fillColor: "#476f63",
+  fillOpacity: 0.20,
+  opacity: 1.0,
+  weight: 1.5,
 }
 
-export function NeighborhoodMiniMap({ neighborhoodName, currentLat, currentLng, sequencePoints, heading }: Props) {
+// One POI per category, max 4 total
+function pickTopPlaces(places: Place[]): Place[] {
+  const seen = new Set<string>()
+  const picked: Place[] = []
+  for (const p of places) {
+    if (!seen.has(p.category) && picked.length < 4) {
+      seen.add(p.category)
+      picked.push(p)
+    }
+  }
+  return picked
+}
+
+const CATEGORY_COLOR: Record<string, string> = {
+  food: "#e05c2a",
+  bar: "#9b59b6",
+  park: "#27ae60",
+  civic: "#2980b9",
+  entertainment: "#e67e22",
+}
+
+function poiIcon(place: Place) {
+  const color = CATEGORY_COLOR[place.category] ?? "#888"
+  const label = place.name.length > 18 ? place.name.slice(0, 17) + "…" : place.name
+  return L.divIcon({
+    className: "",
+    iconAnchor: [3, 3],
+    html: `<div style="display:flex;flex-direction:column;align-items:flex-start;gap:1px;pointer-events:none">
+      <div style="width:6px;height:6px;border-radius:50%;background:${color};border:1.5px solid rgba(255,255,255,0.9);box-shadow:0 1px 3px rgba(0,0,0,0.35);flex-shrink:0"></div>
+      <span style="font-size:7px;font-weight:600;color:#1a1a1a;text-shadow:0 0 3px #fff,0 0 3px #fff;white-space:nowrap;line-height:1">${label}</span>
+    </div>`,
+  })
+}
+
+function neighborhoodLabelIcon(name: string) {
+  return L.divIcon({
+    className: "",
+    iconAnchor: [0, 0],
+    html: `<span style="font-size:8px;font-weight:800;letter-spacing:0.10em;text-transform:uppercase;color:#2d4a25;text-shadow:0 0 4px rgba(255,255,255,0.95),0 0 8px rgba(255,255,255,0.7);white-space:nowrap;pointer-events:none">${name}</span>`,
+  })
+}
+
+export function NeighborhoodMiniMap({ neighborhoodName, currentLat, currentLng, heading }: Props) {
   const [area, setArea] = useState<Area | null>(null)
+  const [places, setPlaces] = useState<Place[]>([])
 
   useEffect(() => {
     let cancelled = false
@@ -97,14 +125,32 @@ export function NeighborhoodMiniMap({ neighborhoodName, currentLat, currentLng, 
     return () => { cancelled = true }
   }, [neighborhoodName])
 
-  const center: [number, number] = area
-    ? [area.lat, area.lng]
-    : [currentLat, currentLng]
+  useEffect(() => {
+    if (!neighborhoodName) return
+    let cancelled = false
+    fetch(`/api/places?neighborhood=${encodeURIComponent(neighborhoodName)}&limit=20`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data: unknown) => {
+        if (cancelled || !data) return
+        const raw = (data as { places?: unknown[] })?.places ?? []
+        const valid = raw.filter((p): p is Place => {
+          if (!p || typeof p !== "object") return false
+          const x = p as Partial<Place>
+          return typeof x.id === "string" && typeof x.name === "string" &&
+            typeof x.lat === "number" && typeof x.lng === "number"
+        })
+        setPlaces(pickTopPlaces(valid))
+      })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [neighborhoodName])
+
+  const center: [number, number] = area ? [area.lat, area.lng] : [currentLat, currentLng]
 
   return (
     <MapContainer
       center={center}
-      zoom={16}
+      zoom={13}
       className="h-full w-full"
       zoomControl={false}
       dragging={false}
@@ -115,7 +161,7 @@ export function NeighborhoodMiniMap({ neighborhoodName, currentLat, currentLng, 
       attributionControl={false}
     >
       <TileLayer
-        url="https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png"
+        url="https://{s}.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}{r}.png"
         attribution=""
       />
 
@@ -127,30 +173,39 @@ export function NeighborhoodMiniMap({ neighborhoodName, currentLat, currentLng, 
             interactive={false}
             style={() => BOUNDARY_STYLE}
           />
-          {!sequencePoints?.length && <FitToBoundary boundary={area.boundaryGeojson} />}
+          <LockToBoundary boundary={area.boundaryGeojson} />
         </>
       )}
 
-      <CameraFollower lat={currentLat} lng={currentLng} />
+      {/* Neighborhood name label at centroid */}
+      {area && (
+        <Marker
+          position={[area.lat, area.lng]}
+          interactive={false}
+          icon={neighborhoodLabelIcon(area.name)}
+        />
+      )}
 
-      {sequencePoints?.map((pt, i) => (
-        <CircleMarker
-          key={i}
-          center={[pt.lat, pt.lng]}
-          radius={4}
-          pathOptions={{ fillColor: "#888", fillOpacity: 0.7, stroke: false }}
+      {/* Top POI markers — one per category */}
+      {places.map((p) => (
+        <Marker
+          key={p.id}
+          position={[p.lat, p.lng]}
+          interactive={false}
+          icon={poiIcon(p)}
         />
       ))}
 
+      {/* User position dot + bearing arrow */}
       <Marker
         position={[currentLat, currentLng]}
         interactive={false}
         icon={L.divIcon({
-          className: '',
-          iconAnchor: [12, 12],
-          html: `<div style="position:relative;width:24px;height:24px">
-            <div style="position:absolute;inset:4px;border-radius:50%;background:#e84040;border:2px solid #fff;box-shadow:0 0 4px rgba(0,0,0,0.5)"></div>
-            ${heading != null ? `<div style="position:absolute;top:-6px;left:50%;transform:translateX(-50%) rotate(${heading}deg);transform-origin:center 18px;width:0;height:0;border-left:5px solid transparent;border-right:5px solid transparent;border-bottom:11px solid #e84040;filter:drop-shadow(0 0 2px rgba(0,0,0,0.6))"></div>` : ''}
+          className: "",
+          iconAnchor: [14, 14],
+          html: `<div style="position:relative;width:28px;height:28px">
+            <div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:12px;height:12px;border-radius:50%;background:#fff;border:2.5px solid #476f63;box-shadow:0 0 0 1.5px rgba(255,255,255,0.6),0 2px 6px rgba(0,0,0,0.45)"></div>
+            ${heading != null ? `<div style="position:absolute;top:-8px;left:50%;transform:translateX(-50%) rotate(${heading}deg);transform-origin:center 22px;width:0;height:0;border-left:5px solid transparent;border-right:5px solid transparent;border-bottom:11px solid #476f63;filter:drop-shadow(0 0 2px rgba(0,0,0,0.4))"></div>` : ""}
           </div>`,
         })}
       />

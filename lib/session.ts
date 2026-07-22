@@ -19,14 +19,14 @@ export interface SessionContext {
   clerkUserId: string
 }
 
-// ─── Internal helpers ──────────────────────────────────────────────────────────
+// ─── Internal helpers (exported for reuse by lib/simRuns.ts) ──────────────────
 
-async function getChicagoCityId(supabase: ReturnType<typeof createSupabaseAdminClient>): Promise<string | null> {
+export async function getChicagoCityId(supabase: ReturnType<typeof createSupabaseAdminClient>): Promise<string | null> {
   const { data } = await supabase.from('cities').select('id').eq('slug', 'chicago').single()
   return (data as { id: string } | null)?.id ?? null
 }
 
-async function getCommunityAreaId(
+export async function getCommunityAreaId(
   supabase: ReturnType<typeof createSupabaseAdminClient>,
   cityId: string,
   neighborhood: string,

@@ -4,6 +4,7 @@ import { Fragment, useEffect, useMemo, useState } from "react";
 import { Beer, Landmark, Music2, Trees, Utensils } from "lucide-react";
 import {
   Circle,
+  CircleMarker,
   GeoJSON as GeoJSONLayer,
   MapContainer,
   Marker,
@@ -31,7 +32,7 @@ interface SimulationMapProps {
   mapActions?: MapAction[];
 }
 
-interface CommunityAreaMapArea {
+export interface CommunityAreaMapArea {
   communityAreaNumber: number;
   name: string;
   slug: string;
@@ -41,23 +42,23 @@ interface CommunityAreaMapArea {
   boundaryGeojson?: GeoJSON.GeoJsonObject | null;
 }
 
-const COLORS = {
-  ink: "#263126",
-  muted: "#66715f",
-  cream: "#fff9ee",
-  sage: "#6f8d5f",
-  sageSoft: "#dfe8d4",
-  sageStrong: "#4f6f45",
-  terracotta: "#c76545",
-  amber: "#e7ad4e",
-  lake: "#6597b8",
-  park: "#5f8d55",
+export const COLORS = {
+  ink: "#111315",
+  muted: "#6e7474",
+  cream: "#fbf8f2",
+  sage: "#6f9b8b",
+  sageSoft: "#dce9e4",
+  sageStrong: "#476f63",
+  terracotta: "#b95f3f",
+  amber: "#d5a547",
+  lake: "#536a8a",
+  park: "#547d70",
   civic: "#7f6fb2",
-  dimFill: "#d7d5cc",
-  dimStroke: "#8f9187",
+  dimFill: "#dad8d3",
+  dimStroke: "#8b9090",
 };
 
-const CATEGORY_META: Record<
+export const CATEGORY_META: Record<
   EntertainmentPlaceCategory,
   { label: string; color: string; Icon: typeof Utensils }
 > = {
@@ -68,9 +69,9 @@ const CATEGORY_META: Record<
   entertainment: { label: "Arts", color: COLORS.amber, Icon: Music2 },
 };
 
-const CATEGORY_ORDER = Object.keys(CATEGORY_META) as EntertainmentPlaceCategory[];
+export const CATEGORY_ORDER = Object.keys(CATEGORY_META) as EntertainmentPlaceCategory[];
 
-function escapeHtml(value: string) {
+export function escapeHtml(value: string) {
   return value
     .replaceAll("&", "&amp;")
     .replaceAll("<", "&lt;")
@@ -79,28 +80,28 @@ function escapeHtml(value: string) {
     .replaceAll("'", "&#039;");
 }
 
-function toLatLng(point: MapPoint): [number, number] {
+export function toLatLng(point: MapPoint): [number, number] {
   return [point.lat, point.lng];
 }
 
-function boundaryData(value: unknown): GeoJSON.GeoJsonObject | null {
+export function boundaryData(value: unknown): GeoJSON.GeoJsonObject | null {
   if (value && typeof value === "object" && "type" in value) {
     return value as GeoJSON.GeoJsonObject;
   }
   return null;
 }
 
-function areaBounds(area: CommunityAreaMapArea | null): L.LatLngBounds | null {
+export function areaBounds(area: CommunityAreaMapArea | null): L.LatLngBounds | null {
   if (!area?.boundaryGeojson) return null;
   const bounds = L.geoJSON(area.boundaryGeojson).getBounds();
   return bounds.isValid() ? bounds : null;
 }
 
-function normalizeName(value: string) {
+export function normalizeName(value: string) {
   return value.toLowerCase().trim();
 }
 
-function validAreas(value: unknown): CommunityAreaMapArea[] {
+export function validAreas(value: unknown): CommunityAreaMapArea[] {
   if (!value || typeof value !== "object" || !("areas" in value)) return [];
   const areas = (value as { areas?: unknown }).areas;
   if (!Array.isArray(areas)) return [];
@@ -118,7 +119,7 @@ function validAreas(value: unknown): CommunityAreaMapArea[] {
   });
 }
 
-function validPlace(value: unknown): EntertainmentPlace | null {
+export function validPlace(value: unknown): EntertainmentPlace | null {
   if (!value || typeof value !== "object") return null;
   const item = value as Partial<EntertainmentPlace>;
   if (
@@ -143,6 +144,7 @@ function pointsFromActions(actions: MapAction[]): [number, number][] {
           : [toLatLng(action.origin), toLatLng(action.destination)];
     }
     if (action.type === "entertainment_summary") return [];
+    if (action.type === "transit_stops") return [];
     return [toLatLng(action.center)];
   });
 }
@@ -192,7 +194,7 @@ function TrackZoom({ onZoom }: { onZoom: (zoom: number) => void }) {
   return null;
 }
 
-function workplaceIcon() {
+export function workplaceIcon() {
   return L.divIcon({
     className: "",
     html: `<div style="
@@ -220,7 +222,7 @@ function groupOffset(category: EntertainmentPlaceCategory) {
   return offsets[category];
 }
 
-function placeOffset(category: EntertainmentPlaceCategory) {
+export function placeOffset(category: EntertainmentPlaceCategory) {
   const offsets: Record<EntertainmentPlaceCategory, { x: number; y: number }> = {
     food: { x: 14, y: 8 },
     bar: { x: -14, y: 10 },
@@ -260,7 +262,7 @@ function groupIcon(category: EntertainmentPlaceCategory, count: number) {
   });
 }
 
-function placeIcon(place: EntertainmentPlace) {
+export function placeIcon(place: EntertainmentPlace) {
   const meta = CATEGORY_META[place.category];
   const offset = placeOffset(place.category);
   return L.divIcon({
@@ -315,7 +317,7 @@ function groupedPlaces(places: EntertainmentPlace[]) {
   });
 }
 
-function areaStyle(selected: boolean) {
+export function areaStyle(selected: boolean) {
   if (selected) {
     return {
       color: COLORS.terracotta,
@@ -462,37 +464,40 @@ export function SimulationMap({
             weight: 2,
           };
 
+          const topTypes = action.byType
+            ? Object.entries(action.byType)
+                .sort((a, b) => b[1] - a[1])
+                .slice(0, 3)
+                .map(([type, count]) => `${type.charAt(0).toUpperCase() + type.slice(1)} ${count}`)
+                .join(" · ")
+            : null;
+
+          const crimePopup = (
+            <Popup>
+              <div className="min-w-[190px] text-xs text-[#263126]">
+                <p className="font-semibold">{action.neighborhood}</p>
+                <p className="mt-1">{action.label}</p>
+                <p className="mt-1 text-[#53616b]">
+                  {action.cityAverage
+                    ? `${action.total} reports vs ${Math.round(action.cityAverage)} city average`
+                    : `${action.total} reports this month`}
+                </p>
+                {topTypes && <p className="mt-1 text-[#53616b]">{topTypes}</p>}
+              </div>
+            </Popup>
+          );
+
           if (data) {
             return (
               <GeoJSONLayer key={action.id} data={data} style={() => pathOptions}>
-                <Popup>
-                  <div className="min-w-[190px] text-xs text-[#263126]">
-                    <p className="font-semibold">{action.neighborhood}</p>
-                    <p className="mt-1">{action.label}</p>
-                    <p className="mt-1 text-[#53616b]">
-                      {action.cityAverage
-                        ? `${action.total} reports vs ${Math.round(action.cityAverage)} city average`
-                        : `${action.total} reports this month`}
-                    </p>
-                  </div>
-                </Popup>
+                {crimePopup}
               </GeoJSONLayer>
             );
           }
 
           return (
             <Circle key={action.id} center={toLatLng(action.center)} radius={1150} pathOptions={pathOptions}>
-              <Popup>
-                <div className="min-w-[190px] text-xs text-[#263126]">
-                  <p className="font-semibold">{action.neighborhood}</p>
-                  <p className="mt-1">{action.label}</p>
-                  <p className="mt-1 text-[#53616b]">
-                    {action.cityAverage
-                      ? `${action.total} reports vs ${Math.round(action.cityAverage)} city average`
-                      : `${action.total} reports this month`}
-                  </p>
-                </div>
-              </Popup>
+              {crimePopup}
             </Circle>
           );
         })}
@@ -546,6 +551,30 @@ export function SimulationMap({
               </Marker>
             </Fragment>
           );
+        })}
+
+        {mapActions.map((action) => {
+          if (action.type !== "transit_stops") return null;
+          return action.stops.map((stop) => (
+            <CircleMarker
+              key={`${action.id}-${stop.name}-${stop.lat}-${stop.lng}`}
+              center={[stop.lat, stop.lng]}
+              radius={stop.mode === "rail" ? 6 : 5}
+              pathOptions={{
+                color: stop.mode === "rail" ? "#1a8cff" : "#f59e0b",
+                fillColor: stop.mode === "rail" ? "#1a8cff" : "#f59e0b",
+                fillOpacity: 0.9,
+                weight: 1.5,
+              }}
+            >
+              <Popup>
+                <div className="text-xs text-[#263126]">
+                  <p className="font-semibold">{stop.name}</p>
+                  <p className="mt-1 text-[#53616b]">{stop.routeLabel}</p>
+                </div>
+              </Popup>
+            </CircleMarker>
+          ));
         })}
 
         {workplaceCoords && (

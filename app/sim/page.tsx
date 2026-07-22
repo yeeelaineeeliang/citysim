@@ -3,8 +3,8 @@ import { SimClient } from "./SimClient";
 export default async function SimPage({
   searchParams,
 }: {
-  searchParams: Promise<{ demo?: string }>;
+  searchParams: Promise<{ demo?: string; autorun?: string }>;
 }) {
-  const { demo } = await searchParams;
-  return <SimClient demoMode={demo === "1"} />;
+  const { demo, autorun } = await searchParams;
+  return <SimClient demoMode={demo === "1"} autorun={autorun === "1"} />;
 }

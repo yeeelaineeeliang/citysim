@@ -1,6 +1,6 @@
 import type { UserProfile } from "@/lib/tools/types";
 
-const PROFILE_STORAGE_KEY = "citysim:user_profile";
+const PROFILE_STORAGE_KEY = "livingthere:user_profile";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);

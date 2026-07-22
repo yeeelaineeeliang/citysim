@@ -5,8 +5,8 @@ import "leaflet/dist/leaflet.css";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "CityLiving Sim",
-  description: "October 2024 Hyde Park bus ridership simulation",
+  title: "LivingThere",
+  description: "Live a year in a Chicago neighborhood before you sign the lease.",
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {

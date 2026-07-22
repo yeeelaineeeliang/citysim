@@ -60,7 +60,9 @@ export interface ServiceResult {
 export interface HousingResult {
   affordable_units: number
   affordable_developments: number
-  avg_rent_estimate: number
+  // null = no estimate loaded for this area. Never coerce to 0 — a zero rent
+  // reads as "fits any budget" downstream in verdicts.
+  avg_rent_estimate: number | null
   median_rent_estimate: number | null
   note?: string
 }
@@ -150,13 +152,30 @@ export interface CrimeAreaSignalMapAction {
   fillColor: string
   fillOpacity: number
   label: string
+  byType?: Record<string, number>
   boundaryGeojson?: unknown
+}
+
+export interface TransitStop {
+  name: string
+  lat: number
+  lng: number
+  routeLabel: string
+  mode: 'bus' | 'rail'
+}
+
+export interface TransitStopsMapAction {
+  type: 'transit_stops'
+  id: string
+  neighborhood: string
+  stops: TransitStop[]
 }
 
 export type MapAction =
   | EntertainmentSummaryMapAction
   | CommuteRouteMapAction
   | CrimeAreaSignalMapAction
+  | TransitStopsMapAction
 
 export type ToolResult =
   | CrimeResult
@@ -185,4 +204,12 @@ export interface ChatResponse {
   response: string
   toolsUsed: string[]
   mapActions?: MapAction[]
+}
+
+export interface DataSummary {
+  crime: number | null
+  transitRiders: number | null
+  requests311: number | null
+  avgRent: number | null
+  commuteMinutes: number | null
 }

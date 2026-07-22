@@ -17,7 +17,7 @@ import type { GeocodeSuggestion } from "@/app/api/geocode/route";
 
 const GEOCODE_DEBOUNCE_MS = 350;
 const REVIEW_SUBMIT_ARM_DELAY_MS = 500;
-const STORAGE_KEY = "citysim:profile_form";
+const STORAGE_KEY = "livingthere:profile_form";
 
 interface StoredFormState {
   budget: number;
@@ -79,10 +79,10 @@ const LIFESTYLE_OPTIONS = [
 ];
 
 const FORM_STEPS = [
-  { id: "basics", label: "Profile", title: "Budget, workplace, commute" },
-  { id: "priorities", label: "Priorities", title: "What should win" },
-  { id: "requests", label: "Requests", title: "Anything extra" },
-  { id: "review", label: "Review", title: "Ready to simulate" },
+  { id: "basics", label: "Daily life", title: "Budget, anchor, movement" },
+  { id: "priorities", label: "Tradeoffs", title: "What should win" },
+  { id: "requests", label: "Details", title: "What numbers may miss" },
+  { id: "review", label: "Review", title: "Take this life into Chicago" },
 ] as const;
 
 type PrioritySliders = Record<(typeof PRIORITY_KEYS)[number], number>;
@@ -169,7 +169,7 @@ const REQUEST_SUGGESTIONS = [
   "Easy grocery trips",
 ];
 
-export function OnboardingProfileForm({ onComplete, submitLabel = "Start simulation", onDraftChange }: Readonly<Props>) {
+export function OnboardingProfileForm({ onComplete, submitLabel = "Find my neighborhoods", onDraftChange }: Readonly<Props>) {
   const [budget, setBudget] = useState(1400);
   const [workplace, setWorkplace] = useState("");
   const [workplaceCoords, setWorkplaceCoords] = useState<{ lat: number; lng: number } | null>(null);
@@ -581,7 +581,7 @@ export function OnboardingProfileForm({ onComplete, submitLabel = "Start simulat
 
             <label className="grid gap-3">
               <span className="text-base font-semibold text-[color:var(--muted-strong)]">
-                What else should CityLiving Sim consider?
+                What else should LivingThere consider?
               </span>
               <textarea
                 name="notes"
@@ -617,14 +617,14 @@ export function OnboardingProfileForm({ onComplete, submitLabel = "Start simulat
         {stepId === "review" && (
           <>
             <div className="grid gap-3">
-              <p className="text-lg font-semibold">Review and run the simulation</p>
+              <p className="text-lg font-semibold">Review the life Chicago will respond to</p>
               <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
                 <div className="rounded-[var(--radius-md)] border border-[color:var(--panel-border)] bg-white/70 p-3">
                   <p className="text-sm font-medium text-[color:var(--muted)]">Budget</p>
                   <p className="mt-1 text-xl font-semibold">${budget.toLocaleString()}</p>
                 </div>
                 <div className="rounded-[var(--radius-md)] border border-[color:var(--panel-border)] bg-white/70 p-3">
-                  <p className="text-sm font-medium text-[color:var(--muted)]">Workplace</p>
+                  <p className="text-sm font-medium text-[color:var(--muted)]">Daily anchor</p>
                   <p className="mt-1 line-clamp-2 text-xl font-semibold">{workplace.trim() || "Not specified"}</p>
                 </div>
                 <div className="rounded-[var(--radius-md)] border border-[color:var(--panel-border)] bg-white/70 p-3">
@@ -632,7 +632,7 @@ export function OnboardingProfileForm({ onComplete, submitLabel = "Start simulat
                   <p className="mt-1 text-xl font-semibold capitalize">{commutePref}</p>
                 </div>
                 <div className="rounded-[var(--radius-md)] border border-[color:var(--panel-border)] bg-white/70 p-3">
-                  <p className="text-sm font-medium text-[color:var(--muted)]">Top priority</p>
+                  <p className="text-sm font-medium text-[color:var(--muted)]">Lead tradeoff</p>
                   <p className="mt-1 text-xl font-semibold">{PRIORITY_LABELS[topPriority]}</p>
                 </div>
               </div>

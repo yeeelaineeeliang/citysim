@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  __disableSupabaseRateLimitForTests,
   apiAuthResult,
   checkRateLimit,
   getClientIp,
@@ -109,27 +110,31 @@ test("rate limiter blocks requests over the policy threshold", () => {
   if (!blocked.allowed) assert.equal(blocked.retryAfterSeconds, 60);
 });
 
-test("request rate limiter enforces both user and IP buckets", () => {
+test("request rate limiter enforces both user and IP buckets", async () => {
+  __disableSupabaseRateLimitForTests(true);
   resetRateLimitsForTests();
   const policy = { name: "route-test", max: 2, windowMs: 60_000 };
   const req = (ip: string) => new Request("http://localhost/api/chat", { headers: { "x-forwarded-for": ip } });
 
-  assert.equal(rateLimitRequest(req("203.0.113.10"), "user_a", policy), null);
-  assert.equal(rateLimitRequest(req("203.0.113.11"), "user_a", policy), null);
-  assert.equal(rateLimitRequest(req("203.0.113.12"), "user_a", policy)?.status, 429);
+  assert.equal(await rateLimitRequest(req("203.0.113.10"), "user_a", policy), null);
+  assert.equal(await rateLimitRequest(req("203.0.113.11"), "user_a", policy), null);
+  assert.equal((await rateLimitRequest(req("203.0.113.12"), "user_a", policy))?.status, 429);
 
   resetRateLimitsForTests();
 
-  assert.equal(rateLimitRequest(req("203.0.113.20"), "user_a", policy), null);
-  assert.equal(rateLimitRequest(req("203.0.113.20"), "user_b", policy), null);
-  assert.equal(rateLimitRequest(req("203.0.113.20"), "user_c", policy)?.status, 429);
+  assert.equal(await rateLimitRequest(req("203.0.113.20"), "user_a", policy), null);
+  assert.equal(await rateLimitRequest(req("203.0.113.20"), "user_b", policy), null);
+  assert.equal((await rateLimitRequest(req("203.0.113.20"), "user_c", policy))?.status, 429);
+  __disableSupabaseRateLimitForTests(false);
 });
 
-test("guest discovery routes can use IP as their rate-limit identity", () => {
+test("guest discovery routes can use IP as their rate-limit identity", async () => {
+  __disableSupabaseRateLimitForTests(true);
   resetRateLimitsForTests();
   const req = new Request("http://localhost/api/match", { headers: { "x-forwarded-for": "198.51.100.3" } });
 
   assert.equal(getClientIp(req), "198.51.100.3");
-  assert.equal(rateLimitRequest(req, `guest:${getClientIp(req)}`, { name: "guest-test", max: 1, windowMs: 60_000 }), null);
-  assert.equal(rateLimitRequest(req, `guest:${getClientIp(req)}`, { name: "guest-test", max: 1, windowMs: 60_000 })?.status, 429);
+  assert.equal(await rateLimitRequest(req, `guest:${getClientIp(req)}`, { name: "guest-test", max: 1, windowMs: 60_000 }), null);
+  assert.equal((await rateLimitRequest(req, `guest:${getClientIp(req)}`, { name: "guest-test", max: 1, windowMs: 60_000 }))?.status, 429);
+  __disableSupabaseRateLimitForTests(false);
 });
