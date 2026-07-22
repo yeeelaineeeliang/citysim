@@ -24,6 +24,7 @@ notebooks/
 test-results/
 NEWCityLivingSim_ProjectOverview copy.md
 .env*.local
+newSession.md
 
 # clerk configuration (can include secrets)
 /.clerk/
