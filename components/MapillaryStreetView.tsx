@@ -105,6 +105,7 @@ export function MapillaryStreetView({ lat, lng, month, hourOfDay = 12, neighborh
     if (!containerRef.current || sequence.length === 0) return
 
     let cancelled = false
+    let failTimer: number | null = null
 
     import("mapillary-js").then(({ Viewer }) => {
       if (cancelled || !containerRef.current) return
@@ -118,6 +119,15 @@ export function MapillaryStreetView({ lat, lng, month, hourOfDay = 12, neighborh
         component: { cover: false, sequence: false },
       })
 
+      // Same class of silent failure as CinematicStreetPano: a bad token,
+      // deleted/private image, or rate limit fails internally with no event
+      // and no error callback — fall back to the CityViewScene render instead
+      // of leaving the panel stuck on "Loading street imagery…" forever.
+      let imageLoaded = false
+      failTimer = window.setTimeout(() => {
+        if (!cancelled && !imageLoaded) setNoImagery(true)
+      }, 8000)
+
       // Track live camera bearing so the minimap cone stays in sync
       viewer.on("bearing", (e: { bearing: number }) => {
         setViewerBearing(e.bearing)
@@ -125,14 +135,19 @@ export function MapillaryStreetView({ lat, lng, month, hourOfDay = 12, neighborh
 
       // Track exact image position so the minimap dot moves as user walks
       viewer.on("image", (e: { image: { lngLat: { lat: number; lng: number } } }) => {
+        imageLoaded = true
+        if (failTimer !== null) window.clearTimeout(failTimer)
         setViewerPosition({ lat: e.image.lngLat.lat, lng: e.image.lngLat.lng })
       })
 
       viewerRef.current = viewer
+    }).catch(() => {
+      if (!cancelled) setNoImagery(true)
     })
 
     return () => {
       cancelled = true
+      if (failTimer !== null) window.clearTimeout(failTimer)
       setViewerBearing(null)
     }
   }, [sequence])

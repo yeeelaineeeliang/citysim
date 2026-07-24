@@ -60,6 +60,7 @@ export function CinematicStreetPano({ lat, lng, onImageryStatus }: Props) {
 
     let cancelled = false
     let driftTimer: number | null = null
+    let failTimer: number | null = null
 
     import("mapillary-js").then(({ Viewer }) => {
       if (cancelled || !containerRef.current) return
@@ -81,8 +82,22 @@ export function CinematicStreetPano({ lat, lng, onImageryStatus }: Props) {
         },
       })
 
+      // The SDK can fail to fetch this imageId (bad token, deleted/private
+      // image, rate limit) as an internal rejection with no "image" event and
+      // no error callback — the layer would otherwise stay invisible forever.
+      let imageLoaded = false
+      failTimer = window.setTimeout(() => {
+        if (!cancelled && !imageLoaded) {
+          statusRef.current?.(false)
+          viewer.remove()
+          if (viewerRef.current === viewer) viewerRef.current = null
+        }
+      }, 8000)
+
       viewer.on("image", () => {
         if (cancelled) return
+        imageLoaded = true
+        if (failTimer !== null) window.clearTimeout(failTimer)
         setReady(true)
         statusRef.current?.(true)
       })
@@ -98,11 +113,14 @@ export function CinematicStreetPano({ lat, lng, onImageryStatus }: Props) {
       }, 50)
 
       viewerRef.current = viewer
+    }).catch(() => {
+      if (!cancelled) statusRef.current?.(false)
     })
 
     return () => {
       cancelled = true
       if (driftTimer !== null) window.clearInterval(driftTimer)
+      if (failTimer !== null) window.clearTimeout(failTimer)
       viewerRef.current?.remove()
       viewerRef.current = null
     }

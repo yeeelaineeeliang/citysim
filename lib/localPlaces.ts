@@ -154,14 +154,19 @@ function summarize(places: EntertainmentPlace[]): PlacesResult["summary"] {
   return { total: places.length, byCategory };
 }
 
-async function loadSupabasePlaces(): Promise<EntertainmentPlace[] | null> {
+async function loadSupabasePlaces(query: PlacesQuery): Promise<EntertainmentPlace[] | null> {
   if (!hasSupabaseCredentials()) return null;
   try {
     const supabase = createSupabaseAdminClient();
-    const { data, error } = await supabase
+    // Filter by neighborhood in the query itself — the table holds thousands of
+    // rows citywide, so an unfiltered .limit() would silently drop areas whose
+    // rows fall past the cap.
+    let builder = supabase
       .from("entertainment_places")
       .select("id, name, category, latitude, longitude, neighborhood, address, source, description")
       .limit(5000);
+    if (query.neighborhood) builder = builder.ilike("neighborhood", query.neighborhood);
+    const { data, error } = await builder;
     if (error || !data) return null;
     const places = data
       .map((item, index) =>
@@ -191,7 +196,7 @@ export function parsePlaceCategories(value: string | null): EntertainmentPlaceCa
 }
 
 export async function queryLocalEntertainmentPlaces(query: PlacesQuery): Promise<PlacesResult> {
-  const supabasePlaces = await loadSupabasePlaces();
+  const supabasePlaces = await loadSupabasePlaces(query);
   const source: PlacesSource = supabasePlaces ? "supabase" : "local_cache";
   const places = filterPlaces(supabasePlaces ?? readLocalPlaces(), query);
 

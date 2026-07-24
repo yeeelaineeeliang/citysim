@@ -1,4 +1,4 @@
-import type { ChatMessage } from "@/lib/tools/types";
+import type { ChatMessage, MapAction } from "@/lib/tools/types";
 
 export type SimMessageKind = "opener" | "answer" | "user" | "thinking";
 
@@ -6,6 +6,8 @@ export interface SimMessage extends ChatMessage {
   month: number;
   year: number;
   kind: SimMessageKind;
+  /** Map evidence attached to an assistant answer — lets old answers be restaged on the map. UI-only; toChatHistory strips it. */
+  mapActions?: MapAction[];
 }
 
 export interface SimMessageMonthGroup {

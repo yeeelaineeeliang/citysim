@@ -115,6 +115,16 @@ export async function queryCommute(
   const hasRealData = drivingRes.durationSeconds !== null || walkingRes.durationSeconds !== null
   const key = `${mode}_minutes` as keyof CommuteResult['estimates']
 
+  const confidence: CommuteResult['confidence'] =
+    mode === 'transit' ? 'low' : hasRealData ? 'medium' : 'low'
+
+  const note =
+    mode === 'transit'
+      ? 'Transit time is a coarse distance-based estimate (not CTA schedule data). Driving/walking/biking use OSRM road-network routing.'
+      : hasRealData
+        ? 'Road-network times from OSRM routing (driving, walking, biking). Transit is a distance-based estimate — not a CTA route plan.'
+        : 'Coarse estimate from community-area coordinate to workplace. This is not a CTA route plan.'
+
   return {
     origin_neighborhood: neighborhood,
     destination: workplace || 'not specified',
@@ -122,9 +132,7 @@ export async function queryCommute(
     distance_miles: dist,
     estimated_minutes: estimates[key],
     estimates,
-    confidence: hasRealData ? 'medium' : 'low',
-    note: hasRealData
-      ? 'Road-network times from OSRM routing (driving, walking, biking). Transit is a distance-based estimate — not a CTA route plan.'
-      : 'Coarse estimate from community-area coordinate to workplace. This is not a CTA route plan.',
+    confidence,
+    note,
   }
 }

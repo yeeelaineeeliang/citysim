@@ -97,15 +97,6 @@ function routeLabelFromTransit(transit: TransitResult | null): string | null {
     if (label) return label
   }
 
-  const entries = Object.entries(summary)
-  if (entries.length === 1) {
-    const [key, value] = entries[0]
-    if (typeof value === 'number' || typeof value === 'string') {
-      const label = normalizeRouteValue(key)
-      if (label) return label
-    }
-  }
-
   return null
 }
 
@@ -258,10 +249,17 @@ export async function buildMapActions(
       : commute.mode === 'transit'
         ? 'Transit geometry is unavailable in the local CTA cache, so this remains an access estimate rather than a route line.'
         : commute.note || 'Road-network route from OSRM when available; verify exact conditions before travel.'
+    // Only a real matched GTFS corridor may put a specific route number on screen —
+    // routeLabel here is just a matching hint, never display text on its own.
+    const confirmedRouteLabel = transitCorridor?.label ?? null
     actions.push({
       type: 'commute_route',
       id: `commute-${req.neighborhood}-${year}-${req.month}`,
-      title: [timing, distance, transitCorridor?.label ?? routeLabel ?? commute.mode].filter(Boolean).join(' · '),
+      title: [
+        timing,
+        distance,
+        confirmedRouteLabel ?? (commute.mode === 'transit' ? 'Transit (unconfirmed route)' : commute.mode),
+      ].filter(Boolean).join(' · '),
       originName: req.neighborhood,
       destinationName: commute.destination || req.profile.workplace || 'Workplace',
       origin: center,
@@ -269,7 +267,7 @@ export async function buildMapActions(
       mode: commute.mode,
       distanceMiles: commute.distance_miles,
       estimatedMinutes: commute.estimated_minutes,
-      routeLabel: transitCorridor?.label ?? routeLabel,
+      routeLabel: confirmedRouteLabel,
       caveat,
       ...(geometry ? { geometry } : {}),
       ...(transitCorridor?.segments ? { segments: transitCorridor.segments } : {}),

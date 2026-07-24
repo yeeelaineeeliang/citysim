@@ -13,11 +13,13 @@ import {
   monthGroupKey,
   type SimMessage,
 } from "@/lib/simMessages";
-import type { UserProfile } from "@/lib/tools/types";
 import dynamic from "next/dynamic";
 import { NEIGHBORHOOD_COORDINATES } from "@/lib/neighborhoodCoordinates";
 import type { CommunityAreaMapMatch } from "@/components/CommunityAreaBlockMap";
-import { DEMO_PROFILE, DEMO_NEIGHBORHOOD, DEMO_MONTH, DEMO_OPENING } from "@/lib/demoData";
+import { DEMO_PROFILE, DEMO_NEIGHBORHOOD, DEMO_MONTH, DEMO_OPENING, DEMO_ACTS } from "@/lib/demoData";
+import type { DataSummary, MapAction, UserProfile } from "@/lib/tools/types";
+import { AnimatedCounter } from "./AnimatedCounter";
+import { SeasonLedger } from "./SeasonLedger";
 import {
   MATCH_RANK_BADGE_STROKE,
   MATCH_RANK_BADGE_SURFACE,
@@ -96,25 +98,16 @@ const ACT_ACCENT: Record<SimAct, string> = {
   4: "var(--season-winter)",
 };
 
-function AnimatedCounter({ to, from = 0 }: { to: number; from?: number }) {
-  const [value, setValue] = useState(from);
-  const reducedMotion = usePrefersReducedMotion();
-  useEffect(() => {
-    if (reducedMotion || to === from) { setValue(to); return; }
-    const duration = 1500;
-    const start = performance.now();
-    let rafId: number;
-    function tick() {
-      const elapsed = performance.now() - start;
-      const progress = Math.min(elapsed / duration, 1);
-      const eased = 1 - Math.pow(1 - progress, 3);
-      setValue(Math.round(from + eased * (to - from)));
-      if (progress < 1) rafId = requestAnimationFrame(tick);
-    }
-    rafId = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(rafId);
-  }, [to, from, reducedMotion]);
-  return <>{value}</>;
+/** Plain-language name for what Sam's answer staged on the map — feeds the stage title card. */
+function stageTitleFromActions(actions: MapAction[], monthName: string): string | null {
+  const parts: string[] = [];
+  for (const action of actions) {
+    if (action.type === "commute_route") parts.push(`Your ${monthName} commute to ${action.destinationName}`);
+    else if (action.type === "crime_area_signal") parts.push("Crime vs the city average");
+    else if (action.type === "entertainment_summary") parts.push("Local places");
+    else if (action.type === "transit_stops") parts.push("Transit stops");
+  }
+  return parts.length ? parts.join(" · ") : null;
 }
 
 type MatchChipTone = "good" | "warn" | "caution" | "info" | "neutral";
@@ -174,7 +167,16 @@ function matchChips(match: CommunityAreaMapMatch, commutePref?: UserProfile["com
   }));
 }
 
-function MessageBubble({ message, compact = false }: { message: SimMessage; compact?: boolean }) {
+function MessageBubble({
+  message,
+  compact = false,
+  onShowMap,
+}: {
+  message: SimMessage;
+  compact?: boolean;
+  /** Restages this answer's map evidence — present only for answers that carry mapActions. */
+  onShowMap?: (actions: MapAction[]) => void;
+}) {
   const isUser = message.role === "user";
   const isOpener = message.kind === "opener";
 
@@ -196,6 +198,8 @@ function MessageBubble({ message, compact = false }: { message: SimMessage; comp
     );
   }
 
+  const mapChip = !compact && onShowMap && message.mapActions?.length ? message.mapActions : null;
+
   return (
     <div className="flex justify-start">
       <div
@@ -206,6 +210,16 @@ function MessageBubble({ message, compact = false }: { message: SimMessage; comp
         }`}
       >
         {message.content}
+        {mapChip && (
+          <button
+            type="button"
+            onClick={() => onShowMap?.(mapChip)}
+            className="mt-2.5 flex items-center gap-1.5 rounded-[var(--radius-sm)] border border-[color:var(--sage)] bg-[color:var(--sage-50)] px-2.5 py-1.5 text-xs font-bold text-[color:var(--sage-strong)] transition-colors hover:bg-[color:var(--sage-100)]"
+          >
+            <MapIcon size={13} />
+            Show on map
+          </button>
+        )}
       </div>
     </div>
   );
@@ -395,22 +409,6 @@ export function SimClient({ demoMode = false, autorun = false }: Readonly<SimCli
   function handleVerdictTryAnother() {
     runData.stopAutoRun();
     setStep("neighborhood");
-  }
-
-  function renderSuggestedQuestionChips() {
-    return (
-      <div className="flex flex-wrap gap-2">
-        {SUGGESTED_QUESTIONS.map((q) => (
-          <button
-            key={q}
-            onClick={() => void chat.send(q)}
-            className="rounded-[var(--radius-sm)] border border-[color:var(--panel-border)] bg-white/72 px-3 py-2 text-left text-xs font-bold text-[color:var(--muted-strong)] transition-colors hover:border-[color:var(--sage)] hover:bg-white hover:text-[color:var(--sage-strong)]"
-          >
-            {q}
-          </button>
-        ))}
-      </div>
-    );
   }
 
   // ══════════════════════════════════════════════════════════════════════════════
@@ -614,6 +612,30 @@ export function SimClient({ demoMode = false, autorun = false }: Readonly<SimCli
   const currentGroup = messageGroups.find((group) => group.key === currentGroupKey);
   const earlierGroups = messageGroups.filter((group) => group.key !== currentGroupKey);
   const currentMessages = currentGroup?.messages ?? [];
+
+  // Season-ledger data: real run summaries first, hand-seeded demo acts as the
+  // demo fallback so a demo skipper still sees live tiles. Live skippers get
+  // null → the ledger renders its "Live the year" CTA instead.
+  const summaryForAct = (act: SimAct | null): DataSummary | null =>
+    act ? actDataSummaries[act] ?? (isDemoMode ? DEMO_ACTS[act].dataSummary : null) : null;
+  const seasonSummary = summaryForAct(currentSeasonAct);
+  const prevSeasonSummary = summaryForAct(
+    currentSeasonAct && currentSeasonAct > 1 ? ((currentSeasonAct - 1) as SimAct) : null,
+  );
+  const crimeCityAverage =
+    activeMapActions
+      .concat(isDemoMode && currentSeasonAct ? DEMO_ACTS[currentSeasonAct].mapActions : [])
+      .find(
+        (action): action is Extract<MapAction, { type: "crime_area_signal" }> =>
+          action.type === "crime_area_signal",
+      )?.cityAverage ?? null;
+  const stageTitle = stageTitleFromActions(activeMapActions, monthName);
+
+  function restageAnswer(actions: MapAction[]) {
+    chat.setActiveMapActions(actions);
+    setSceneMode("map");
+    setMobilePanel("map");
+  }
 
   return (
     <div className="relative h-screen overflow-hidden bg-[color:var(--cinema-ink)] text-white">
@@ -900,7 +922,7 @@ export function SimClient({ demoMode = false, autorun = false }: Readonly<SimCli
 
             {/* Minimap bottom-right — hidden on the verdict screen (currentAct is null) */}
             {sceneCoords && currentAct && (
-            <div className="absolute bottom-4 right-4 z-[1200] h-[132px] w-[132px] overflow-hidden rounded-[var(--radius-md)] border border-white/24 shadow-xl sm:bottom-6 sm:right-6 sm:h-[190px] sm:w-[190px]">
+            <div className="absolute bottom-4 right-4 z-[1200] w-[132px] overflow-hidden rounded-[var(--radius-md)] border border-white/24 shadow-xl sm:bottom-6 sm:right-6 sm:w-[190px]">
                 <SimPlayerMap
                   neighborhoodName={neighborhood}
                   homeCoords={{ lat: sceneCoords.lat, lng: sceneCoords.lng }}
@@ -943,6 +965,19 @@ export function SimClient({ demoMode = false, autorun = false }: Readonly<SimCli
             }}
           />
         ) : (
+        <>
+        <SeasonLedger
+          summary={seasonSummary}
+          prevSummary={prevSeasonSummary}
+          monthName={monthName}
+          accent={currentSeasonAct ? ACT_ACCENT[currentSeasonAct] : "var(--panel-border)"}
+          crimeCityAverage={crimeCityAverage}
+          onAsk={(question) => {
+            setMobilePanel("advisor");
+            void chat.send(question);
+          }}
+          onLiveYear={() => void startAutoRun()}
+        />
         <main className="grid min-h-0 flex-1 pb-[72px] lg:grid-cols-[minmax(0,1fr)_420px] lg:grid-rows-1 lg:pb-0">
           <section className={`relative min-h-0 overflow-hidden bg-black/20 ${mobilePanel !== "map" ? "max-lg:hidden" : ""}`}>
             <div className="relative h-full w-full overflow-hidden bg-black/35 shadow-2xl">
@@ -954,6 +989,12 @@ export function SimClient({ demoMode = false, autorun = false }: Readonly<SimCli
                     workplaceCoords={workplaceCoords}
                     workplaceName={profile?.workplace}
                     mapActions={activeMapActions}
+                    season={MONTH_TO_ACT[month] ? ACT_SEASON[MONTH_TO_ACT[month]!] : undefined}
+                    stageTitle={stageTitle}
+                    onAskSam={(question) => {
+                      setMobilePanel("advisor");
+                      void chat.send(question);
+                    }}
                   />
                 ) : sceneCoords ? (
                   <MapillaryStreetView lat={sceneCoords.lat} lng={sceneCoords.lng} month={month} neighborhoodName={neighborhood} />
@@ -972,9 +1013,6 @@ export function SimClient({ demoMode = false, autorun = false }: Readonly<SimCli
                 )}
                 <div className="pointer-events-none absolute inset-x-0 top-0 z-[1000] flex flex-wrap items-start justify-between gap-3 bg-gradient-to-b from-black/60 to-transparent px-4 py-3">
                   <div className="flex flex-wrap items-center gap-2">
-                    <p className="text-xs font-bold text-white/75">
-                      {sceneMode === "map" ? "Interactive map" : sceneMode === "city3d" ? "3D city view" : "Street view"}
-                    </p>
                     <div className="pointer-events-auto flex rounded-[var(--radius-sm)] border border-white/20 bg-black/45 p-0.5 shadow-sm backdrop-blur">
                       {(["street", "map"] as const).map((mode) => (
                         <button
@@ -1059,16 +1097,21 @@ export function SimClient({ demoMode = false, autorun = false }: Readonly<SimCli
                         </div>
                       )}
 
-                      {currentMessages.map((msg, i) => (
-                        <div key={`${currentGroupKey}-${msg.kind}-${i}`} className="space-y-3">
-                          <MessageBubble message={msg} />
-                        </div>
-                      ))}
-                    </section>
-
-                    <section className="space-y-3 border-t border-[color:var(--panel-border)] pt-5">
-                      <p className="film-caption text-[color:var(--muted)]">Investigate this chapter</p>
-                      {renderSuggestedQuestionChips()}
+                      {currentMessages.map((msg, i) => {
+                        const isLatestAnswer =
+                          msg.role === "assistant" &&
+                          i === currentMessages.length - 1 &&
+                          msg === messages[messages.length - 1];
+                        return (
+                          <div
+                            key={`${currentGroupKey}-${msg.kind}-${i}`}
+                            ref={isLatestAnswer ? chat.latestAnswerRef : undefined}
+                            className="scroll-mt-3 space-y-3"
+                          >
+                            <MessageBubble message={msg} onShowMap={restageAnswer} />
+                          </div>
+                        );
+                      })}
                     </section>
 
                     {openingThinking && (
@@ -1131,7 +1174,22 @@ export function SimClient({ demoMode = false, autorun = false }: Readonly<SimCli
                   </div>
                 </div>
 
-                <footer className="border-t border-[color:var(--panel-border)] bg-[rgba(255,250,242,0.94)] px-5 py-4">
+                <footer className="border-t border-[color:var(--panel-border)] bg-[rgba(255,250,242,0.94)] px-5 pb-4 pt-3">
+                  {/* Quick questions live with the composer so they never push
+                      Sam's answer out of view in the scroll column. */}
+                  <div className="no-scrollbar mx-auto mb-2.5 flex max-w-2xl gap-2 overflow-x-auto lg:max-w-none">
+                    {SUGGESTED_QUESTIONS.map((q) => (
+                      <button
+                        key={q}
+                        type="button"
+                        disabled={loading}
+                        onClick={() => void chat.send(q)}
+                        className="shrink-0 rounded-full border border-[color:var(--panel-border)] bg-white/72 px-3 py-1.5 text-xs font-bold text-[color:var(--muted-strong)] transition-colors hover:border-[color:var(--sage)] hover:bg-white hover:text-[color:var(--sage-strong)] disabled:opacity-40"
+                      >
+                        {q}
+                      </button>
+                    ))}
+                  </div>
                   <form
                     onSubmit={(e) => { e.preventDefault(); void chat.send(input); }}
                     className="mx-auto flex max-w-2xl gap-2 lg:max-w-none"
@@ -1189,6 +1247,7 @@ export function SimClient({ demoMode = false, autorun = false }: Readonly<SimCli
             </div>
           </section>
         </main>
+        </>
         )}
 
         {runState === "idle" && !showInterstitial && (

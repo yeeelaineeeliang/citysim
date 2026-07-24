@@ -422,10 +422,103 @@ input[type="range"] {
   color: var(--sage-strong);
 }
 
+.atlas-map-shell .leaflet-popup-content-wrapper {
+  background: var(--panel);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+}
+
+.atlas-map-shell .leaflet-popup-content {
+  margin: 12px 14px;
+  line-height: 1.4;
+}
+
+.atlas-map-shell .leaflet-popup-tip-container {
+  filter: none;
+}
+
+.atlas-map-shell .leaflet-popup-tip {
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  box-shadow: none;
+}
+
+.atlas-map-shell .leaflet-popup-close-button {
+  top: 8px !important;
+  right: 8px !important;
+  color: var(--muted);
+  font-size: 16px;
+  border-radius: 999px;
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.atlas-map-shell .leaflet-popup-close-button:hover {
+  background: var(--sage-100);
+  color: var(--sage-strong);
+}
+
 .community-area-label-marker {
   background: transparent;
   border: 0;
   pointer-events: none;
+}
+
+.no-scrollbar {
+  scrollbar-width: none;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+@keyframes sim-marker-in {
+  from {
+    opacity: 0;
+    transform: scale(0.4);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes sim-workplace-pulse {
+  0%,
+  100% {
+    box-shadow: 0 8px 20px rgba(38, 49, 38, 0.28), 0 0 0 0 rgba(17, 19, 21, 0.32);
+  }
+  50% {
+    box-shadow: 0 8px 20px rgba(38, 49, 38, 0.28), 0 0 0 7px rgba(17, 19, 21, 0);
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .atlas-map-shell .sim-route-flow {
+    stroke-dasharray: 1 14;
+    stroke-linecap: round;
+    animation: sim-route-flow 900ms linear infinite;
+  }
+
+  .sim-marker-in {
+    animation: sim-marker-in 360ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
+  }
+
+  .sim-workplace-pulse {
+    animation: sim-workplace-pulse 2.6s ease-in-out infinite;
+  }
+}
+
+@keyframes sim-route-flow {
+  to {
+    stroke-dashoffset: -15;
+  }
 }
 
 .community-area-label-marker > div {
