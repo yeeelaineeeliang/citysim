@@ -23,6 +23,8 @@ import type {
   MapAction,
   MapPoint,
 } from "@/lib/tools/types";
+import type { ActSeason } from "@/app/sim/types";
+import { SeasonalAtmosphere } from "./SeasonalAtmosphere";
 
 interface SimulationMapProps {
   neighborhoodName: string;
@@ -30,6 +32,11 @@ interface SimulationMapProps {
   workplaceCoords?: { lat: number; lng: number } | null;
   workplaceName?: string;
   mapActions?: MapAction[];
+  season?: ActSeason;
+  /** Plain-language name of what Sam's answer staged on the map; null = default "at a glance" view. */
+  stageTitle?: string | null;
+  /** Sends a question into the Sam chat panel — connects map clicks to the conversation. */
+  onAskSam?: (question: string) => void;
 }
 
 export interface CommunityAreaMapArea {
@@ -174,7 +181,8 @@ function FitBounds({
         : points;
       pointsToFit.forEach((point) => bounds.extend(point));
       if (!bounds.isValid()) return;
-      map.fitBounds(bounds, { padding: [16, 16], maxZoom: 15.25 });
+      // flyToBounds so restaged evidence reads as a camera move, not a cut.
+      map.flyToBounds(bounds, { padding: [16, 16], maxZoom: 15.25, duration: 0.9 });
     });
     return () => window.cancelAnimationFrame(frame);
   }, [key, map, points, selectedArea]);
@@ -194,10 +202,60 @@ function TrackZoom({ onZoom }: { onZoom: (zoom: number) => void }) {
   return null;
 }
 
-export function workplaceIcon() {
+export function homeIcon() {
   return L.divIcon({
     className: "",
     html: `<div style="
+      display:flex;align-items:center;justify-content:center;
+      width:26px;height:26px;border-radius:999px;
+      background:${COLORS.sageStrong};
+      border:2px solid ${COLORS.cream};
+      color:white;
+      font:900 11px/1 'SF Pro Text','Inter',system-ui,sans-serif;
+      box-shadow:0 8px 20px rgba(38,49,38,0.28);
+    ">H</div>`,
+    iconSize: [26, 26],
+    iconAnchor: [13, 13],
+  });
+}
+
+/**
+ * Category-scoped question a marker click can hand to the Sam chat panel.
+ * Phrasing deliberately includes the demo-QA keyword for each category so
+ * demo mode gets a real canned answer instead of a miss.
+ */
+function askQuestionForPlace(place: EntertainmentPlace): string {
+  switch (place.category) {
+    case "food":
+      return `Where do people actually eat around ${place.name}?`;
+    case "bar":
+      return `What's the bar scene like near ${place.name}?`;
+    case "park":
+      return `Is ${place.name} a good park for a weekend?`;
+    case "civic":
+      return `How are city services around ${place.name}?`;
+    case "entertainment":
+      return `What's fun to do near ${place.name}?`;
+  }
+}
+
+function AskSamButton({ question, onAskSam }: { question: string; onAskSam?: (question: string) => void }) {
+  if (!onAskSam) return null;
+  return (
+    <button
+      type="button"
+      onClick={() => onAskSam(question)}
+      className="mt-2 w-full rounded-[var(--radius-sm)] border border-[color:var(--sage)] bg-[color:var(--sage-50)] px-2.5 py-1.5 text-xs font-bold text-[color:var(--sage-strong)] transition-colors hover:bg-[color:var(--sage-100)]"
+    >
+      Ask Sam about this →
+    </button>
+  );
+}
+
+export function workplaceIcon() {
+  return L.divIcon({
+    className: "",
+    html: `<div class="sim-workplace-pulse" style="
       display:flex;align-items:center;justify-content:center;
       width:26px;height:26px;border-radius:999px;
       background:${COLORS.ink};
@@ -262,34 +320,44 @@ function groupIcon(category: EntertainmentPlaceCategory, count: number) {
   });
 }
 
-export function placeIcon(place: EntertainmentPlace) {
+export function placeIcon(place: EntertainmentPlace, staggerIndex = 0) {
   const meta = CATEGORY_META[place.category];
   const offset = placeOffset(place.category);
+  // Outer div only ever handles the static category-cluster offset; the
+  // entrance animation's transform lives on the inner div so the two never
+  // fight over the `transform` property.
   return L.divIcon({
     className: "",
-    html: `<div data-place-marker="${escapeHtml(place.category)}" style="
-      display:flex;align-items:center;justify-content:center;
-      transform:translate(${offset.x}px, ${offset.y}px);
-      width:24px;height:24px;border-radius:999px;
-      background:${meta.color};
-      border:2px solid ${COLORS.cream};
-      box-shadow:0 7px 18px rgba(38,49,38,0.24);
-      color:white;
-      font:900 11px/1 system-ui,sans-serif;
-    ">${escapeHtml(meta.label[0])}</div>`,
+    html: `<div data-place-marker="${escapeHtml(place.category)}" style="transform:translate(${offset.x}px, ${offset.y}px);">
+      <div class="sim-marker-in" style="
+        display:flex;align-items:center;justify-content:center;
+        animation-delay:${Math.min(staggerIndex, 12) * 35}ms;
+        width:24px;height:24px;border-radius:999px;
+        background:${meta.color};
+        border:2px solid ${COLORS.cream};
+        box-shadow:0 7px 18px rgba(38,49,38,0.24);
+        color:white;
+        font:900 11px/1 system-ui,sans-serif;
+      ">${escapeHtml(meta.label[0])}</div>
+    </div>`,
     iconSize: [24, 24],
     iconAnchor: [12, 12],
   });
 }
 
-function routeLabelIcon(title: string, tone: "route" | "warning" = "route") {
-  const color = tone === "warning" ? COLORS.terracotta : COLORS.sageStrong;
+function routeLabelIcon(title: string, tone: "route" | "estimated" | "warning" = "route") {
+  const styleByTone = {
+    route: { color: COLORS.sageStrong, border: "1px solid rgba(111,141,95,0.28)" },
+    estimated: { color: COLORS.muted, border: "1px dashed rgba(110,116,116,0.45)" },
+    warning: { color: COLORS.terracotta, border: "1px solid rgba(185,95,63,0.35)" },
+  } as const;
+  const { color, border } = styleByTone[tone];
   return L.divIcon({
     className: "",
     html: `<div style="
       transform:translate(-50%,-50%);
       white-space:nowrap;
-      border:1px solid rgba(111,141,95,0.28);
+      border:${border};
       border-radius:999px;
       background:rgba(255,249,238,0.97);
       color:${color};
@@ -342,9 +410,13 @@ export function SimulationMap({
   workplaceCoords,
   workplaceName,
   mapActions = [],
+  season,
+  stageTitle,
+  onAskSam,
 }: SimulationMapProps) {
   const [areas, setAreas] = useState<CommunityAreaMapArea[]>([]);
   const [places, setPlaces] = useState<EntertainmentPlace[]>([]);
+  const [placesLoading, setPlacesLoading] = useState(true);
   const [activeCategories, setActiveCategories] = useState<Set<EntertainmentPlaceCategory>>(
     () => new Set(CATEGORY_ORDER),
   );
@@ -367,6 +439,7 @@ export function SimulationMap({
 
   useEffect(() => {
     const controller = new AbortController();
+    setPlacesLoading(true);
     const params = new URLSearchParams({
       neighborhood: neighborhoodName,
       limit: "120",
@@ -384,6 +457,9 @@ export function SimulationMap({
       .catch((err: unknown) => {
         if (err instanceof DOMException && err.name === "AbortError") return;
         setPlaces([]);
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setPlacesLoading(false);
       });
     return () => controller.abort();
   }, [neighborhoodName]);
@@ -405,6 +481,7 @@ export function SimulationMap({
     [...places, ...actionPlaces].forEach((place) => byId.set(place.id, place));
     return [...byId.values()].filter((place) => activeCategories.has(place.category));
   }, [actionPlaces, activeCategories, places]);
+  const hasAnyPlaceData = places.length > 0 || actionPlaces.length > 0;
   const placeGroups = useMemo(() => groupedPlaces(mergedPlaces), [mergedPlaces]);
   const fitPoints: [number, number][] = [
     [neighborhoodCoords.lat, neighborhoodCoords.lng],
@@ -423,6 +500,7 @@ export function SimulationMap({
 
   return (
     <div className="atlas-map-shell relative h-full w-full overflow-hidden bg-[color:var(--sage-50)]">
+      {season && <SeasonalAtmosphere season={season} />}
       <MapContainer
         center={[neighborhoodCoords.lat, neighborhoodCoords.lng]}
         zoom={13}
@@ -434,9 +512,11 @@ export function SimulationMap({
       >
         <ZoomControl position="bottomleft" />
         <TileLayer
-          url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
-          opacity={0.5}
+          url="https://{s}.basemaps.cartocdn.com/rastertiles/voyager_nolabels/{z}/{x}/{y}{r}.png"
+          attribution='&copy; <a href="https://carto.com/attributions">CARTO</a> &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+          subdomains="abcd"
+          maxZoom={19}
+          opacity={1}
         />
         <TrackZoom onZoom={setZoom} />
         <FitBounds selectedArea={selectedArea} points={fitPoints} />
@@ -474,15 +554,16 @@ export function SimulationMap({
 
           const crimePopup = (
             <Popup>
-              <div className="min-w-[190px] text-xs text-[#263126]">
+              <div className="min-w-[190px] text-xs text-[color:var(--foreground)]">
                 <p className="font-semibold">{action.neighborhood}</p>
                 <p className="mt-1">{action.label}</p>
-                <p className="mt-1 text-[#53616b]">
+                <p className="mt-1 text-[color:var(--muted)]">
                   {action.cityAverage
                     ? `${action.total} reports vs ${Math.round(action.cityAverage)} city average`
                     : `${action.total} reports this month`}
                 </p>
-                {topTypes && <p className="mt-1 text-[#53616b]">{topTypes}</p>}
+                {topTypes && <p className="mt-1 text-[color:var(--muted)]">{topTypes}</p>}
+                <AskSamButton question="Is it safe here this season?" onAskSam={onAskSam} />
               </div>
             </Popup>
           );
@@ -521,31 +602,51 @@ export function SimulationMap({
                     opacity: 0.86,
                     weight: action.mode === "transit" ? 6 : 5,
                     dashArray: action.source === "estimate" ? "10 8" : undefined,
+                    // Confident routes get a flowing dash so the commute reads as a
+                    // live path; estimated routes stay static-dashed on purpose —
+                    // motion here would overstate confidence the data doesn't have.
+                    className: action.source === "estimate" ? undefined : "sim-route-flow",
                   }}
                 />
               )}
+              <Marker position={toLatLng(action.origin)} icon={homeIcon()} zIndexOffset={700}>
+                <Tooltip direction="top" offset={[0, -13]} opacity={0.96}>
+                  <span className="text-xs font-bold text-[#263126]">Home base · {action.originName}</span>
+                </Tooltip>
+                <Popup>
+                  <div className="text-xs text-[color:var(--foreground)]">
+                    <p className="font-semibold">Home base · {action.originName}</p>
+                    <p className="mt-1 text-[color:var(--muted)]">Where your simulated day starts and ends.</p>
+                  </div>
+                </Popup>
+              </Marker>
               <Marker
                 position={hasGeometry ? routeMidpoint(action) : toLatLng(action.origin)}
-                icon={routeLabelIcon(hasGeometry ? action.title : "Transit route unavailable", hasGeometry ? "route" : "warning")}
+                icon={routeLabelIcon(
+                  hasGeometry ? action.title : "Transit route unavailable",
+                  !hasGeometry ? "warning" : action.source === "estimate" ? "estimated" : "route",
+                )}
+                zIndexOffset={800}
               >
                 <Popup>
-                  <div className="min-w-[230px] text-xs text-[#263126]">
+                  <div className="min-w-[230px] text-xs text-[color:var(--foreground)]">
                     <p className="font-semibold">{action.originName} to {action.destinationName}</p>
                     <p className="mt-1">
                       {action.estimatedMinutes ? `About ${action.estimatedMinutes} minutes` : "Commute estimate"}
                       {action.distanceMiles !== null ? ` over ${action.distanceMiles.toFixed(1)} miles` : ""}
                       {action.routeLabel ? ` · ${action.routeLabel}` : ""}
                     </p>
-                    <p className="mt-1 text-[#53616b]">{action.caveat}</p>
+                    <p className="mt-1 text-[color:var(--muted)]">{action.caveat}</p>
                     {action.segments?.length ? (
-                      <div className="mt-2 grid gap-1 border-t border-[#eadcca] pt-2">
+                      <div className="mt-2 grid gap-1 border-t border-[color:var(--panel-border)] pt-2">
                         {action.segments.map((segment, index) => (
-                          <p key={`${segment.label}-${index}`} className="font-semibold text-[#53616b]">
+                          <p key={`${segment.label}-${index}`} className="font-semibold text-[color:var(--muted)]">
                             {segment.label}
                           </p>
                         ))}
                       </div>
                     ) : null}
+                    <AskSamButton question="What is my morning commute like?" onAskSam={onAskSam} />
                   </div>
                 </Popup>
               </Marker>
@@ -568,9 +669,9 @@ export function SimulationMap({
               }}
             >
               <Popup>
-                <div className="text-xs text-[#263126]">
+                <div className="text-xs text-[color:var(--foreground)]">
                   <p className="font-semibold">{stop.name}</p>
-                  <p className="mt-1 text-[#53616b]">{stop.routeLabel}</p>
+                  <p className="mt-1 text-[color:var(--muted)]">{stop.routeLabel}</p>
                 </div>
               </Popup>
             </CircleMarker>
@@ -597,9 +698,9 @@ export function SimulationMap({
                 zIndexOffset={620}
               >
                 <Popup>
-                  <div className="min-w-[210px] text-xs text-[#263126]">
+                  <div className="min-w-[210px] text-xs text-[color:var(--foreground)]">
                     <p className="font-bold">{CATEGORY_META[group.category].label}</p>
-                    <p className="mt-1 text-[#53616b]">{group.count} local places loaded near {neighborhoodName}.</p>
+                    <p className="mt-1 text-[color:var(--muted)]">{group.count} local places loaded near {neighborhoodName}.</p>
                     <div className="mt-2 grid gap-1">
                       {group.items.slice(0, 5).map((place) => (
                         <p key={place.id} className="font-semibold">{place.name}</p>
@@ -609,52 +710,122 @@ export function SimulationMap({
                 </Popup>
               </Marker>
             ))
-          : mergedPlaces.map((place) => (
+          : mergedPlaces.map((place, index) => (
               <Marker
                 key={place.id}
                 position={[place.lat, place.lng]}
-                icon={placeIcon(place)}
+                icon={placeIcon(place, index)}
                 zIndexOffset={650}
               >
                 <Tooltip direction="top" offset={[0, -12]} opacity={0.96}>
                   <span className="text-xs font-bold text-[#263126]">{place.name}</span>
                 </Tooltip>
                 <Popup>
-                  <div className="min-w-[210px] text-xs text-[#263126]">
-                    <p className="font-bold">{place.name}</p>
-                    <p className="mt-1 text-[#53616b]">{CATEGORY_META[place.category].label}</p>
-                    {place.address && <p className="mt-1 text-[#53616b]">{place.address}</p>}
+                  <div className="min-w-[220px] max-w-[260px] text-[13px] text-[color:var(--foreground)]">
+                    <div className="flex items-center gap-2.5">
+                      <span
+                        className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-white"
+                        style={{ background: CATEGORY_META[place.category].color }}
+                      >
+                        {(() => {
+                          const Icon = CATEGORY_META[place.category].Icon;
+                          return <Icon size={14} strokeWidth={2.2} />;
+                        })()}
+                      </span>
+                      <div className="min-w-0">
+                        <p className="truncate font-bold leading-tight">{place.name}</p>
+                        <p
+                          className="text-[10px] font-bold uppercase tracking-[0.06em]"
+                          style={{ color: CATEGORY_META[place.category].color }}
+                        >
+                          {CATEGORY_META[place.category].label}
+                        </p>
+                      </div>
+                    </div>
+                    {place.address && <p className="mt-2 text-[color:var(--muted)]">{place.address}</p>}
                     {place.description && <p className="mt-1">{place.description}</p>}
-                    {place.source && <p className="mt-2 text-[10px] font-semibold uppercase tracking-[0.06em] text-[#66715f]">{place.source}</p>}
+                    <div className="mt-2 flex items-center gap-1.5 border-t border-[color:var(--panel-border)] pt-2 text-[10px] font-semibold uppercase tracking-[0.05em] text-[color:var(--muted)]">
+                      <span className="inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-[color:var(--sage)]" />
+                      {place.source ? `Source: ${place.source}` : "Unverified local listing — confirm before visiting"}
+                    </div>
+                    <AskSamButton question={askQuestionForPlace(place)} onAskSam={onAskSam} />
                   </div>
                 </Popup>
               </Marker>
             ))}
       </MapContainer>
 
-      <div className="pointer-events-none absolute left-3 top-16 z-[850] flex max-w-[calc(100%-1.5rem)] flex-wrap gap-1.5 sm:left-4 sm:max-w-[520px]">
-        {CATEGORY_ORDER.map((category) => {
-          const meta = CATEGORY_META[category];
-          const Icon = meta.Icon;
-          const active = activeCategories.has(category);
-          return (
-            <button
-              key={category}
-              type="button"
-              aria-pressed={active}
-              onClick={() => toggleCategory(category)}
-              className={`pointer-events-auto inline-flex h-8 items-center gap-1.5 rounded-[var(--radius-sm)] border px-2.5 text-xs font-bold shadow-sm backdrop-blur transition ${
-                active
-                  ? "border-white/70 bg-[rgba(255,249,238,0.94)] text-[color:var(--foreground)]"
-                  : "border-white/30 bg-black/35 text-white/78 hover:bg-black/50"
-              }`}
-            >
-              <Icon size={13} strokeWidth={1.9} style={{ color: active ? meta.color : "currentColor" }} />
-              {meta.label}
-            </button>
-          );
-        })}
+      <div className="pointer-events-none absolute left-3 top-16 z-[850] flex max-w-[calc(100%-1.5rem)] flex-col items-start gap-2 sm:left-4 sm:max-w-[520px]">
+        <div className="rounded-[var(--radius-md)] border border-white/40 bg-black/55 px-3 py-2 backdrop-blur">
+          <p className="text-[9px] font-bold uppercase tracking-widest text-white/50">
+            {stageTitle ? "Sam's evidence" : "At a glance"}
+          </p>
+          <p className="max-w-[300px] text-xs font-bold leading-snug text-white">
+            {stageTitle ?? `${neighborhoodName} essentials — home, work, and local places`}
+          </p>
+        </div>
+
+        <div className="flex flex-wrap gap-1.5">
+          {CATEGORY_ORDER.map((category) => {
+            const meta = CATEGORY_META[category];
+            const Icon = meta.Icon;
+            const active = activeCategories.has(category);
+            return (
+              <button
+                key={category}
+                type="button"
+                aria-pressed={active}
+                aria-label={meta.label}
+                onClick={() => toggleCategory(category)}
+                className={`pointer-events-auto inline-flex h-8 items-center gap-1.5 rounded-[var(--radius-sm)] border px-2.5 text-xs font-bold shadow-sm backdrop-blur transition ${
+                  active
+                    ? "border-white/70 bg-[rgba(255,249,238,0.94)] text-[color:var(--foreground)]"
+                    : "border-white/30 bg-black/35 text-white/78 hover:bg-black/50"
+                }`}
+              >
+                <Icon size={13} strokeWidth={1.9} style={{ color: active ? meta.color : "currentColor" }} />
+                <span className="hidden sm:inline">{meta.label}</span>
+              </button>
+            );
+          })}
+        </div>
+
+        {!placesLoading && !hasAnyPlaceData && (
+          <div className="max-w-[280px] rounded-[var(--radius-md)] border border-white/40 bg-black/45 px-3 py-2 text-[11px] font-semibold leading-snug text-white/85 backdrop-blur">
+            No verified restaurants, bars, parks, or venues loaded for {neighborhoodName} yet — place coverage is currently strongest in Hyde Park.
+          </div>
+        )}
       </div>
+
+      <details className="absolute bottom-8 right-3 z-[850] rounded-[var(--radius-md)] border border-white/40 bg-black/55 text-white/90 backdrop-blur">
+        <summary className="cursor-pointer list-none px-3 py-1.5 text-[11px] font-bold">Legend ▸</summary>
+        <div className="grid gap-1.5 px-3 pb-2.5 text-[11px] font-semibold">
+          <span className="flex items-center gap-2">
+            <span className="flex h-4 w-4 items-center justify-center rounded-full text-[8px] font-black text-white" style={{ background: COLORS.sageStrong }}>H</span>
+            Home base
+          </span>
+          <span className="flex items-center gap-2">
+            <span className="flex h-4 w-4 items-center justify-center rounded-full text-[8px] font-black text-white" style={{ background: COLORS.ink }}>W</span>
+            Workplace
+          </span>
+          <span className="flex items-center gap-2">
+            <span className="inline-block h-0.5 w-4 rounded" style={{ background: COLORS.lake }} />
+            Confirmed route
+          </span>
+          <span className="flex items-center gap-2">
+            <span className="inline-block w-4 border-t-2 border-dashed" style={{ borderColor: COLORS.muted }} />
+            Estimated route
+          </span>
+          <span className="flex items-center gap-2">
+            <span className="flex gap-0.5">
+              {CATEGORY_ORDER.slice(0, 3).map((category) => (
+                <span key={category} className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: CATEGORY_META[category].color }} />
+              ))}
+            </span>
+            Place categories
+          </span>
+        </div>
+      </details>
     </div>
   );
 }

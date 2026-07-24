@@ -135,7 +135,7 @@ export interface CommuteRouteMapAction {
   caveat: string
   geometry?: [number, number][]
   segments?: CommuteRouteSegment[]
-  source?: 'cta_gtfs_cached' | 'osrm' | 'estimate'
+  source?: 'cta_gtfs_cached' | 'osrm' | 'estimate' | 'demo_seed'
   confidence?: 'low' | 'medium'
 }
 

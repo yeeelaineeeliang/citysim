@@ -42,12 +42,21 @@ export function useSimChat({
   const [authPrompt, setAuthPrompt] = useState<AuthPromptReason | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const latestAnswerRef = useRef<HTMLDivElement>(null);
   const messagesRef = useRef<SimMessage[]>([]);
   const openingRequestRef = useRef(0);
   const openingAbortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    // A new answer scrolls to its own top so the user reads it from the
+    // beginning — scrolling to the very bottom buried long answers under
+    // whatever renders after them.
+    const last = messages[messages.length - 1];
+    if (last?.role === "assistant" && latestAnswerRef.current) {
+      latestAnswerRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
+    } else {
+      messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    }
   }, [messages, loading, openingThinking]);
 
   useEffect(() => {
@@ -160,10 +169,12 @@ export function useSimChat({
     if (isDemoMode) {
       const match = matchDemoQA(userMessage, month);
       if (match) {
+        const demoAnswer = createSimMessage("assistant", match.answer, month, "answer");
+        if (match.mapActions?.length) demoAnswer.mapActions = match.mapActions;
         setMessages((prev) => [
           ...prev,
           createSimMessage("user", userMessage, month, "user"),
-          createSimMessage("assistant", match.answer, month, "answer"),
+          demoAnswer,
         ]);
         setLastToolsUsed(match.toolsUsed);
         if (match.mapActions?.length) {
@@ -202,7 +213,9 @@ export function useSimChat({
       if (!res.ok || data.error) throw new Error(data.error ?? "Agent request failed");
       if (!data.response) throw new Error("Empty response from agent");
 
-      setMessages([...next, createSimMessage("assistant", data.response, month, "answer")]);
+      const answer = createSimMessage("assistant", data.response, month, "answer");
+      if (data.mapActions?.length) answer.mapActions = data.mapActions;
+      setMessages([...next, answer]);
       if (data.toolsUsed) setLastToolsUsed(data.toolsUsed);
       if (data.mapActions?.length) {
         setActiveMapActions(data.mapActions);
@@ -226,6 +239,7 @@ export function useSimChat({
     openingThinking, setOpeningThinking,
     authPrompt, setAuthPrompt,
     messagesEndRef,
+    latestAnswerRef,
     messagesRef,
     fetchOpening,
     send,

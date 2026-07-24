@@ -50,7 +50,7 @@ export default function HomePage() {
               <div className="mt-9 flex flex-col gap-3 sm:flex-row">
                 <Link
                   href="/sim?demo=1&autorun=1"
-                  className="inline-flex min-h-13 items-center justify-center gap-2 rounded-[var(--radius-md)] bg-[color:var(--cinema-ivory)] px-5 text-sm font-extrabold text-[color:var(--cinema-ink)] shadow-[0_18px_38px_rgba(0,0,0,0.28)] transition hover:bg-white"
+                  className="inline-flex min-h-13 items-center justify-center gap-2 rounded-[var(--radius-md)] bg-[color:var(--accent)] px-5 text-sm font-extrabold text-white shadow-[0_18px_38px_rgba(0,0,0,0.28)] transition hover:bg-[color:var(--accent-strong)]"
                 >
                   <Play size={16} fill="currentColor" aria-hidden="true" />
                   Watch a year in 90 seconds

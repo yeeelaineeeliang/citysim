@@ -54,20 +54,44 @@ const SEASON_MAP_TINT: Record<ActSeason, string | null> = {
   winter: "rgba(8,15,40,0.35)",
 };
 
-function phaseCaption(phase: 1 | 2 | 3, season: ActSeason, hasWorkplace: boolean): string {
-  if (phase === 1) {
-    if (season === "winter") return "Braving the cold commute";
-    return hasWorkplace ? "Morning — heading to work" : "Morning — starting the day";
+type DayPhase = "waking" | "commute" | "at_work" | "heading_out" | "evening" | "home";
+
+/**
+ * Narrates the avatar's current activity with the user's own data — workplace,
+ * commute minutes, and the real name of the nearest evening spot — so the loop
+ * reads as "your day here", not a wandering sprite.
+ */
+function dayCaption(
+  phase: DayPhase,
+  season: ActSeason,
+  workplaceName: string,
+  commuteMinutes: number | null | undefined,
+  eveningPlace: EntertainmentPlace | null,
+): string {
+  const commute = commuteMinutes != null ? `~${commuteMinutes} min` : "your commute";
+  switch (phase) {
+    case "waking":
+      return season === "winter" ? "Morning · a dark, cold start" : "Morning · out the door";
+    case "commute":
+      return `${commute} to ${workplaceName}`;
+    case "at_work":
+      return `Your day at ${workplaceName}`;
+    case "heading_out":
+      return eveningPlace ? `Evening · heading to ${eveningPlace.name}` : "Evening · out on the block";
+    case "evening":
+      return eveningPlace
+        ? `${eveningPlace.category === "bar" ? "Drinks" : "Dinner"} at ${eveningPlace.name}`
+        : "Evening out nearby";
+    case "home":
+      return season === "winter" ? "In early — it's dark by 4:30" : "Back home";
   }
-  if (phase === 2) return "Out on the block";
-  return season === "winter" ? "Night — straight home" : "Evening — out, then home";
 }
 
 function lerp(a: { lat: number; lng: number }, b: { lat: number; lng: number }, t: number) {
   return { lat: a.lat + (b.lat - a.lat) * t, lng: a.lng + (b.lng - a.lng) * t };
 }
 
-function nearest(target: { lat: number; lng: number }, places: { lat: number; lng: number }[]): { lat: number; lng: number } | null {
+function nearestPlace(target: { lat: number; lng: number }, places: EntertainmentPlace[]): EntertainmentPlace | null {
   if (!places.length) return null;
   let best = places[0]!;
   let bestDist = Infinity;
@@ -123,6 +147,7 @@ export function SimPlayerMap({
   neighborhoodName,
   homeCoords,
   workplaceCoords,
+  workplaceName,
   simMonth,
   isRunning,
   mapActions,
@@ -133,6 +158,8 @@ export function SimPlayerMap({
   const [poiPlaces, setPoiPlaces] = useState<EntertainmentPlace[]>([]);
   const [avatarCoords, setAvatarCoords] = useState<{ lat: number; lng: number }>(homeCoords);
   const [avatarState, setAvatarState] = useState<AvatarState>("at_home");
+  const [dayPhase, setDayPhase] = useState<DayPhase>("waking");
+  const [eveningPlace, setEveningPlace] = useState<EntertainmentPlace | null>(null);
 
   const cameraTargetRef = useRef<{ lat: number; lng: number } | null>(null);
   const cameraTriggerRef = useRef(0);
@@ -185,7 +212,9 @@ export function SimPlayerMap({
     if (!isRunning) return;
 
     const work = workplaceCoords ?? homeCoords;
-    const evening = nearest(work, poiPlaces) ?? homeCoords;
+    const eveningSpot = nearestPlace(work, poiPlaces);
+    const evening = eveningSpot ? { lat: eveningSpot.lat, lng: eveningSpot.lng } : homeCoords;
+    setEveningPlace(eveningSpot);
 
     let rafId: number;
     const startTime = performance.now();
@@ -195,35 +224,44 @@ export function SimPlayerMap({
 
       let pos: { lat: number; lng: number };
       let state: AvatarState;
+      let phase: DayPhase;
 
       if (elapsed < 1.0) {
         pos = homeCoords;
         state = "at_home";
+        phase = "waking";
       } else if (elapsed < 2.5) {
         const t = (elapsed - 1.0) / 1.5;
         pos = lerp(homeCoords, work, Math.min(t, 1));
         state = "walking";
+        phase = "commute";
       } else if (elapsed < 3.0) {
         pos = work;
         state = "at_work";
+        phase = "at_work";
       } else if (elapsed < 4.0) {
         const t = (elapsed - 3.0) / 1.0;
         pos = lerp(work, evening, Math.min(t, 1));
         state = "walking";
+        phase = "heading_out";
       } else if (elapsed < 4.5) {
         pos = evening;
         state = "at_evening";
+        phase = "evening";
       } else if (elapsed < 5.5) {
         const t = (elapsed - 4.5) / 1.0;
         pos = lerp(evening, homeCoords, Math.min(t, 1));
         state = "walking";
+        phase = "home";
       } else {
         pos = homeCoords;
         state = "at_home";
+        phase = "home";
       }
 
       setAvatarCoords(pos);
       setAvatarState(state);
+      setDayPhase(phase);
 
       // Camera waypoints
       if (elapsed >= 2.5 && elapsed < 2.6 && workplaceCoords) {
@@ -247,14 +285,27 @@ export function SimPlayerMap({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [simMonth, isRunning]);
 
+  const tint = SEASON_MAP_TINT[season];
+
   return (
-    <div className="relative" style={{ width: 200, height: 200 }}>
+    <div className="flex w-full flex-col">
+      {/* Day narration — ties the avatar loop to the user's own routine. */}
+      <div className="flex flex-col gap-0.5 border-b border-white/12 bg-black/68 px-2.5 py-1.5 backdrop-blur-sm">
+        <span className="text-[8px] font-bold uppercase tracking-widest text-white/45">
+          Your day here
+        </span>
+        <span className="truncate text-[10px] font-bold leading-tight text-white" key={dayPhase}>
+          {dayCaption(dayPhase, season, workplaceName, monthDataSummary?.commuteMinutes, eveningPlace)}
+        </span>
+      </div>
+
+      <div className="relative h-[112px] w-[132px] sm:h-[160px] sm:w-[190px]">
       <MapContainer
         center={[homeCoords.lat, homeCoords.lng]}
         zoom={14}
         zoomControl={false}
         attributionControl={false}
-        style={{ height: "200px", width: "200px" }}
+        style={{ height: "100%", width: "100%" }}
       >
         <TileLayer url="https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png" />
 
@@ -300,6 +351,16 @@ export function SimPlayerMap({
 
         <MapCameraController targetRef={cameraTargetRef} triggerRef={cameraTriggerRef} />
       </MapContainer>
+
+      {/* Season/time-of-day wash so the minimap matches the act's mood. */}
+      {tint && (
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-0 z-[500]"
+          style={{ background: tint }}
+        />
+      )}
+      </div>
     </div>
   );
 }

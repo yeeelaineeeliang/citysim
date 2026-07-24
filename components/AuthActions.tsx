@@ -32,7 +32,10 @@ export function AuthActions({ className = "" }: AuthActionsProps) {
       </Show>
 
       <Show when="signed-in">
-        <a href="/runs" className={secondaryButton}>
+        <a
+          href="/runs"
+          className="inline-flex h-8 items-center justify-center rounded-[var(--radius-sm)] bg-[color:var(--sage-strong)] px-2 text-[11px] font-bold text-white transition hover:bg-[#3a5c52] sm:px-3 sm:text-xs"
+        >
           My seasons
         </a>
         <UserButton

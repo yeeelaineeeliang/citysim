@@ -61,7 +61,7 @@ function demoCommuteAction(month: number, estimatedMinutes: number): MapAction {
     distanceMiles: 0.5,
     estimatedMinutes,
     routeLabel: 'Route 6',
-    caveat: 'CTA GTFS route-shape corridor from cached public data; verify exact stop, transfer, and schedule details before signing.',
+    caveat: 'Pre-verified CTA Route 6 corridor for Hyde Park ↔ UChicago, matching the cached GTFS shape — shown from saved demo data rather than a live per-request lookup.',
     geometry: DEMO_TRANSIT_GEOMETRY,
     segments: [{
       mode: 'transit',
@@ -70,7 +70,7 @@ function demoCommuteAction(month: number, estimatedMinutes: number): MapAction {
       fromName: '55th Street',
       toName: 'University of Chicago',
     }],
-    source: 'cta_gtfs_cached',
+    source: 'demo_seed',
     confidence: 'medium',
   }
 }
